@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shaded — AI Shader Editor</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <header>
+    <h1>Shaded</h1>
+    <p class="subtitle">AI-Powered Image Shader Editor</p>
+  </header>
+
+  <main>
+    <!-- Left Panel: Controls -->
+    <aside class="panel panel-left">
+      <section class="upload-section">
+        <h2>Image</h2>
+        <div class="drop-zone" id="dropZone">
+          <input type="file" id="imageInput" accept="image/*" hidden>
+          <p>Drop an image here or <button type="button" id="browseBtn">browse</button></p>
+          <p class="hint">PNG, JPG, WebP up to 10MB</p>
+        </div>
+        <div class="image-preview-container" id="imagePreviewContainer" hidden>
+          <img id="imagePreview" alt="Preview">
+          <button type="button" id="removeImageBtn" class="btn-icon" title="Remove image">&times;</button>
+        </div>
+      </section>
+
+      <section class="effect-section">
+        <h2>Effect</h2>
+        <textarea id="effectDescription" placeholder="Describe the shader effect you want...&#10;&#10;Examples:&#10;- Vintage sepia with film grain&#10;- Blur the background, keep foreground sharp&#10;- Cyberpunk neon glow on edges&#10;- Make the sky more vibrant&#10;- Pixelate with a retro palette" rows="5"></textarea>
+        <button type="button" id="generateBtn" class="btn-primary">Generate Shader</button>
+        <div id="generateStatus" class="status" hidden></div>
+      </section>
+
+      <section class="controls-section">
+        <h2>Controls</h2>
+        <label>
+          Intensity
+          <input type="range" id="intensitySlider" min="0" max="100" value="100">
+          <span id="intensityValue">100%</span>
+        </label>
+        <label>
+          <input type="checkbox" id="animateToggle"> Animate (time-based effects)
+        </label>
+      </section>
+
+      <section class="mask-section">
+        <h2>Selective Edit Mask</h2>
+        <p class="hint">Paint a mask to limit where the effect applies. White = effect, Black = original.</p>
+        <div class="mask-tools">
+          <button type="button" id="brushTool" class="btn-tool active" title="Brush (paint white)">Brush</button>
+          <button type="button" id="eraserTool" class="btn-tool" title="Eraser (paint black)">Eraser</button>
+          <button type="button" id="fillMaskBtn" class="btn-tool" title="Fill entire mask white">Fill</button>
+          <button type="button" id="clearMaskBtn" class="btn-tool" title="Clear mask to black">Clear</button>
+          <button type="button" id="invertMaskBtn" class="btn-tool" title="Invert mask">Invert</button>
+        </div>
+        <label>
+          Brush Size
+          <input type="range" id="brushSize" min="2" max="100" value="20">
+          <span id="brushSizeValue">20px</span>
+        </label>
+        <label>
+          Brush Softness
+          <input type="range" id="brushSoftness" min="0" max="100" value="50">
+          <span id="brushSoftnessValue">50%</span>
+        </label>
+        <label>
+          <input type="checkbox" id="showMaskToggle"> Show mask overlay
+        </label>
+      </section>
+
+      <section class="shader-actions">
+        <button type="button" id="saveShaderBtn" class="btn-secondary" disabled>Save to Library</button>
+        <button type="button" id="downloadBtn" class="btn-secondary" disabled>Download Result</button>
+      </section>
+    </aside>
+
+    <!-- Center: Canvas -->
+    <div class="canvas-area">
+      <div class="canvas-wrapper" id="canvasWrapper">
+        <canvas id="glCanvas"></canvas>
+        <canvas id="maskCanvas"></canvas>
+        <div class="canvas-placeholder" id="canvasPlaceholder">
+          <p>Upload an image and generate a shader to get started</p>
+        </div>
+      </div>
+      <div class="shader-info" id="shaderInfo" hidden>
+        <strong id="currentShaderName">No shader loaded</strong>
+        <span id="currentShaderDesc"></span>
+      </div>
+    </div>
+
+    <!-- Right Panel: Shader Library -->
+    <aside class="panel panel-right">
+      <h2>Shader Library</h2>
+      <div class="library-list" id="libraryList">
+        <p class="empty-state">No saved shaders yet. Generate one and save it to build your library.</p>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Save Shader Dialog -->
+  <dialog id="saveDialog">
+    <h3>Save Shader</h3>
+    <label>
+      Name
+      <input type="text" id="saveShaderName" placeholder="My cool shader">
+    </label>
+    <div class="dialog-actions">
+      <button type="button" id="saveDialogCancel" class="btn-secondary">Cancel</button>
+      <button type="button" id="saveDialogConfirm" class="btn-primary">Save</button>
+    </div>
+  </dialog>
+
+  <!-- Rename Dialog -->
+  <dialog id="renameDialog">
+    <h3>Rename Shader</h3>
+    <label>
+      New Name
+      <input type="text" id="renameInput">
+    </label>
+    <div class="dialog-actions">
+      <button type="button" id="renameCancel" class="btn-secondary">Cancel</button>
+      <button type="button" id="renameConfirm" class="btn-primary">Rename</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="/js/renderer.js"></script>
+  <script type="module" src="/js/mask-editor.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
