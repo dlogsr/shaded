@@ -170,6 +170,51 @@ textarea::placeholder {
   opacity: 0.7;
 }
 
+/* Target input */
+.target-section {
+  margin-top: 10px;
+}
+
+.target-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.target-label .hint {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.target-section input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: 13px inherit;
+  outline: none;
+  margin-bottom: 4px;
+}
+
+.target-section input[type="text"]:focus {
+  border-color: var(--accent);
+}
+
+.target-section input[type="text"]::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.target-section > .hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
 /* Buttons */
 .btn-primary {
   width: 100%;

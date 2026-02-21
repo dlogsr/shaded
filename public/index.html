@@ -30,7 +30,17 @@
 
       <section class="effect-section">
         <h2>Effect</h2>
-        <textarea id="effectDescription" placeholder="Describe the shader effect you want...&#10;&#10;Examples:&#10;- Vintage sepia with film grain&#10;- Blur the background, keep foreground sharp&#10;- Cyberpunk neon glow on edges&#10;- Make the sky more vibrant&#10;- Pixelate with a retro palette" rows="5"></textarea>
+        <textarea id="effectDescription" placeholder="Describe the shader effect you want...&#10;&#10;Examples:&#10;- Vintage sepia with film grain&#10;- Gaussian blur&#10;- Cyberpunk neon glow on edges&#10;- Boost vibrance&#10;- Pixelate with a retro palette" rows="4"></textarea>
+
+        <div class="target-section">
+          <label class="target-label">
+            Target
+            <span class="hint">(optional)</span>
+          </label>
+          <input type="text" id="selectionTarget" placeholder="e.g. sky, person, background, shadows, bright areas">
+          <p class="hint">Leave empty to apply to the whole image. Type an object or region to restrict the effect.</p>
+        </div>
+
         <button type="button" id="generateBtn" class="btn-primary">Generate Shader</button>
         <div id="generateStatus" class="status" hidden></div>
       </section>

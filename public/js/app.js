@@ -9,6 +9,7 @@ const imagePreviewContainer = document.getElementById('imagePreviewContainer');
 const imagePreview = document.getElementById('imagePreview');
 const removeImageBtn = document.getElementById('removeImageBtn');
 const effectDescription = document.getElementById('effectDescription');
+const selectionTarget = document.getElementById('selectionTarget');
 const generateBtn = document.getElementById('generateBtn');
 const generateStatus = document.getElementById('generateStatus');
 const intensitySlider = document.getElementById('intensitySlider');
@@ -99,6 +100,9 @@ function setupEventListeners() {
   effectDescription.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) generateShader();
   });
+  selectionTarget.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') generateShader();
+  });
 
   // Controls
   intensitySlider.addEventListener('input', () => {
@@ -150,14 +154,20 @@ function setupEventListeners() {
   saveDialogCancel.addEventListener('click', () => saveDialog.close());
   saveDialogConfirm.addEventListener('click', confirmSave);
   saveDialog.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') confirmSave();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmSave();
+    }
   });
 
   // Rename dialog
   renameCancel.addEventListener('click', () => renameDialog.close());
   renameConfirm.addEventListener('click', confirmRename);
   renameDialog.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') confirmRename();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmRename();
+    }
   });
 }
 
@@ -237,6 +247,10 @@ async function generateShader() {
   try {
     const formData = new FormData();
     formData.append('description', description);
+    const target = selectionTarget.value.trim();
+    if (target) {
+      formData.append('target', target);
+    }
     if (loadedImageFile) {
       formData.append('image', loadedImageFile);
     }
