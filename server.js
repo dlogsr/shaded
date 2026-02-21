@@ -55,6 +55,28 @@ RULES:
    - Edge detection (Sobel operator)
    Combine these with the mask for precise targeting.
 
+SELECTION TARGETS:
+When a "target" is specified (e.g., "sky", "person", "background", "shadows"), you MUST generate
+a selection mask INSIDE the shader that isolates that region. Techniques to use:
+- **Sky**: Detect blue hues (hue ~0.55-0.7) in the upper portion of the image. Combine with a vertical gradient.
+- **Skin/person/face**: Detect skin-tone hue ranges (~0.0-0.1 in normalized HSV) with moderate saturation.
+- **Background**: Use edge detection (Sobel) to find foreground objects, then invert to get background.
+- **Shadows/darks**: Select pixels with low luminance (< 0.3).
+- **Highlights/bright areas**: Select pixels with high luminance (> 0.7).
+- **Midtones**: Select pixels with medium luminance (0.3-0.7).
+- **Foliage/grass/trees**: Detect green hues (~0.2-0.45) with moderate saturation.
+- **Water**: Detect blue/cyan hues with moderate-high saturation in lower image regions.
+- **Warm colors**: Select pixels in the red-yellow hue range.
+- **Cool colors**: Select pixels in the blue-cyan hue range.
+- **Edges**: Use Sobel operator to detect edges.
+- **Any other object**: Analyze the provided image and use the best combination of color, position, and luminance heuristics.
+
+Multiply the computed selection mask with the u_mask uniform to combine AI selection with the user's painted mask:
+\`float finalMask = selectionMask * mask * u_intensity;\`
+Then blend: \`gl_FragColor = vec4(mix(original.rgb, effected.rgb, finalMask), original.a);\`
+
+When NO target is specified, apply the effect everywhere (controlled only by u_mask and u_intensity as normal).
+
 RESPONSE FORMAT:
 Respond with ONLY the fragment shader code wrapped in a code block. No explanations, no vertex shader, just the fragment shader.
 
@@ -66,7 +88,7 @@ precision mediump float;
 // Generate shader from image + description
 app.post('/api/generate-shader', upload.single('image'), async (req, res) => {
   try {
-    const { description } = req.body;
+    const { description, target } = req.body;
     if (!description) {
       return res.status(400).json({ error: 'Description is required' });
     }
@@ -83,10 +105,17 @@ app.post('/api/generate-shader', upload.single('image'), async (req, res) => {
       });
     }
 
-    content.push({
-      type: 'text',
-      text: `Generate a GLSL fragment shader for this effect: "${description}"${req.file ? '\n\nLook at the uploaded image to understand its content and tailor the shader accordingly. If the description mentions specific objects or regions (like "sky", "shadows", "bright areas"), use image analysis techniques in the shader to target those regions.' : ''}`
-    });
+    let prompt = `Generate a GLSL fragment shader for this effect: "${description}"`;
+
+    if (target && target.trim()) {
+      prompt += `\n\nSELECTION TARGET: "${target.trim()}"\nThe effect must ONLY apply to the specified target. Generate a selection mask inside the shader that isolates "${target.trim()}" using color, position, luminance, and edge detection heuristics. Look at the provided image carefully to determine the best detection strategy for this specific target.`;
+    }
+
+    if (req.file) {
+      prompt += '\n\nAnalyze the uploaded image to understand its content and tailor the shader accordingly.';
+    }
+
+    content.push({ type: 'text', text: prompt });
 
     messages.push({ role: 'user', content });
 
