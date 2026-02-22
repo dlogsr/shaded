@@ -45,6 +45,10 @@ const shaderInfo = document.getElementById('shaderInfo');
 const currentShaderName = document.getElementById('currentShaderName');
 const currentShaderDesc = document.getElementById('currentShaderDesc');
 const libraryList = document.getElementById('libraryList');
+const samSelectTool = document.getElementById('samSelectTool');
+const samSelectControls = document.getElementById('samSelectControls');
+const samSelectStatus = document.getElementById('samSelectStatus');
+const samBadge = document.getElementById('samBadge');
 const saveDialog = document.getElementById('saveDialog');
 const saveShaderName = document.getElementById('saveShaderName');
 const saveDialogCancel = document.getElementById('saveDialogCancel');
@@ -62,13 +66,34 @@ let loadedImageFile = null;
 let currentShader = null;
 let shaderLibrary = [];
 let renamingId = null;
+let samAvailable = false;
 
 // Initialize
-function init() {
+async function init() {
   renderer = new ShaderRenderer(glCanvas);
   maskEditor = new MaskEditor(maskCanvas, (canvas) => {
     renderer.updateMask(canvas);
   });
+
+  // Check SAM availability
+  try {
+    const res = await fetch('/api/sam-status');
+    const data = await res.json();
+    samAvailable = data.available;
+  } catch (e) {
+    samAvailable = false;
+  }
+
+  if (samAvailable) {
+    samBadge.hidden = false;
+    samSelectTool.classList.add('sam-tool');
+  } else {
+    samSelectTool.disabled = true;
+    samSelectTool.title = 'SAM unavailable — set REPLICATE_API_TOKEN';
+  }
+
+  // Wire up SAM click handler on the mask editor
+  maskEditor.onSamClick = handleSamClick;
 
   loadLibrary();
   setupEventListeners();
@@ -131,13 +156,22 @@ function setupEventListeners() {
     brushTool.classList.toggle('active', mode === 'brush');
     eraserTool.classList.toggle('active', mode === 'eraser');
     quickSelectTool.classList.toggle('active', mode === 'quickselect');
-    brushControls.hidden = (mode === 'quickselect');
+    samSelectTool.classList.toggle('active', mode === 'sam');
+    brushControls.hidden = (mode === 'quickselect' || mode === 'sam');
     quickSelectControls.hidden = (mode !== 'quickselect');
+    samSelectControls.hidden = (mode !== 'sam');
   }
 
   brushTool.addEventListener('click', () => setMaskTool('brush'));
   eraserTool.addEventListener('click', () => setMaskTool('eraser'));
   quickSelectTool.addEventListener('click', () => setMaskTool('quickselect'));
+  samSelectTool.addEventListener('click', () => {
+    if (!samAvailable) {
+      showMaskStatus('SAM requires REPLICATE_API_TOKEN environment variable.', 'error');
+      return;
+    }
+    setMaskTool('sam');
+  });
 
   fillMaskBtn.addEventListener('click', () => maskEditor.fill());
   clearMaskBtn.addEventListener('click', () => maskEditor.clear());
@@ -370,8 +404,47 @@ async function generateAIMask() {
   }
 
   aiMaskBtn.disabled = true;
-  showMaskStatus('<span class="spinner"></span>Generating mask...', 'loading');
 
+  // Use SAM (Grounded SAM) when available for precise pixel-level masks
+  if (samAvailable) {
+    showMaskStatus('<span class="spinner"></span>Segmenting with SAM...', 'loading');
+    try {
+      const formData = new FormData();
+      formData.append('prompt', target);
+      formData.append('image', loadedImageFile);
+
+      const res = await fetch('/api/sam-segment', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'SAM segmentation failed');
+      }
+
+      const data = await res.json();
+
+      // Apply the SAM mask (pixel-perfect)
+      await maskEditor.setFromImage(data.mask);
+
+      showMaskToggle.checked = true;
+      maskEditor.setVisible(true);
+
+      showMaskStatus(`Selected: "${target}" (SAM)`, 'success');
+      setTimeout(() => { aiMaskStatus.hidden = true; }, 3000);
+      aiMaskBtn.disabled = false;
+      return;
+    } catch (err) {
+      // Fall back to Claude polygon approach
+      console.warn('SAM failed, falling back to Claude:', err.message);
+      showMaskStatus('<span class="spinner"></span>SAM failed, trying Claude...', 'loading');
+    }
+  } else {
+    showMaskStatus('<span class="spinner"></span>Generating mask...', 'loading');
+  }
+
+  // Fallback: Claude polygon-based mask
   try {
     const formData = new FormData();
     formData.append('target', target);
@@ -403,6 +476,56 @@ async function generateAIMask() {
     showMaskStatus(`Error: ${err.message}`, 'error');
   } finally {
     aiMaskBtn.disabled = false;
+  }
+}
+
+// --- SAM Click-to-Segment ---
+
+function showSamStatus(msg, type) {
+  samSelectStatus.innerHTML = msg;
+  samSelectStatus.className = `status ${type}`;
+  samSelectStatus.hidden = false;
+}
+
+async function handleSamClick(nx, ny, additive) {
+  if (!samAvailable) return;
+  if (!loadedImage || !loadedImageFile) {
+    showSamStatus('Upload an image first.', 'error');
+    return;
+  }
+
+  showSamStatus('<span class="spinner"></span>Segmenting...', 'loading');
+
+  try {
+    const formData = new FormData();
+    formData.append('image', loadedImageFile);
+    formData.append('x', nx.toString());
+    formData.append('y', ny.toString());
+
+    const res = await fetch('/api/sam-click', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'SAM click failed');
+    }
+
+    const data = await res.json();
+
+    // Apply the mask
+    await maskEditor.setFromImage(data.mask, additive);
+
+    // Show the mask overlay
+    showMaskToggle.checked = true;
+    maskEditor.setVisible(true);
+
+    const label = data.objectName || 'object';
+    showSamStatus(`Selected: "${label}"`, 'success');
+    setTimeout(() => { samSelectStatus.hidden = true; }, 3000);
+  } catch (err) {
+    showSamStatus(`Error: ${err.message}`, 'error');
   }
 }
 

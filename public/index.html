@@ -62,7 +62,7 @@
         <p class="hint">White = effect applies, Black = original. Use the tools below to build your mask.</p>
 
         <div class="mask-subsection">
-          <h3>AI Object Select</h3>
+          <h3>AI Object Select <span class="sam-badge" id="samBadge" hidden>SAM</span></h3>
           <div class="ai-mask-row">
             <input type="text" id="aiMaskTarget" placeholder="e.g. sky, person, hair, car...">
             <button type="button" id="aiMaskBtn" class="btn-primary btn-sm">Select</button>
@@ -76,6 +76,7 @@
             <button type="button" id="brushTool" class="btn-tool active" title="Brush (paint white)">Brush</button>
             <button type="button" id="eraserTool" class="btn-tool" title="Eraser (paint black)">Eraser</button>
             <button type="button" id="quickSelectTool" class="btn-tool" title="Quick Select — click to select similar colors">Quick Select</button>
+            <button type="button" id="samSelectTool" class="btn-tool" title="SAM Select — click on any object to segment it with AI">SAM Select</button>
             <button type="button" id="fillMaskBtn" class="btn-tool" title="Fill entire mask white">Fill</button>
             <button type="button" id="clearMaskBtn" class="btn-tool" title="Clear mask to black">Clear</button>
             <button type="button" id="invertMaskBtn" class="btn-tool" title="Invert mask">Invert</button>
@@ -107,6 +108,11 @@
             <span id="qsGrowValue">2px</span>
           </label>
           <p class="hint">Click image to select similar colors. Shift+click to add. Alt+click to subtract.</p>
+        </div>
+
+        <div id="samSelectControls" hidden>
+          <p class="hint">Click on any object in the image — SAM will precisely segment it. Shift+click to add to mask.</p>
+          <div id="samSelectStatus" class="status" hidden></div>
         </div>
 
         <label>

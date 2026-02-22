@@ -265,6 +265,43 @@ textarea::placeholder {
   letter-spacing: 0.06em;
   color: var(--text-dim);
   margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sam-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  border-radius: 3px;
+  background: rgba(46, 204, 113, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(46, 204, 113, 0.3);
+  text-transform: uppercase;
+}
+
+.btn-tool.sam-tool {
+  border-color: rgba(46, 204, 113, 0.3);
+  color: var(--success);
+}
+
+.btn-tool.sam-tool:hover {
+  border-color: var(--success);
+  background: rgba(46, 204, 113, 0.1);
+}
+
+.btn-tool.sam-tool.active {
+  border-color: var(--success);
+  color: var(--success);
+  background: rgba(46, 204, 113, 0.15);
+}
+
+.btn-tool.sam-tool:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 .ai-mask-row {
