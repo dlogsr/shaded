@@ -122,30 +122,18 @@ export class ShaderRenderer {
 
   // Preprocess shader to fix common GLSL ES 1.0 issues
   _sanitizeShader(source) {
-    // Inject integer math helpers after precision line to avoid
-    // "no matching overloaded function found" errors for abs/min/max/clamp with int args.
-    // Uses unique names to avoid conflicts with built-in float overloads.
-    const helpers = `
-// GLSL ES 1.0 integer math helpers (auto-injected)
-int _iabs(int x) { return x >= 0 ? x : -x; }
-int _imin(int a, int b) { return a < b ? a : b; }
-int _imax(int a, int b) { return a > b ? a : b; }
-int _iclamp(int x, int lo, int hi) { return _imin(_imax(x, lo), hi); }
-`;
-    // Insert helpers after the precision statement
-    const precisionMatch = source.match(/precision\s+(lowp|mediump|highp)\s+float\s*;/);
-    if (precisionMatch) {
-      const idx = source.indexOf(precisionMatch[0]) + precisionMatch[0].length;
-      source = source.slice(0, idx) + helpers + source.slice(idx);
-    }
-
-    // Fix common patterns: abs/min/max/clamp called with int-typed loop variables
-    // Pattern: abs( <int expression> ) where int expression involves loop vars or int casts
-    // We wrap int arguments of abs/min/max/clamp in float() casts
-    // This regex targets: abs(someVar - someVar) patterns common in convolution loops
+    // Fix common patterns: abs/sign called with int-typed loop variables
+    // Wrap int arguments in float() casts: abs(i - center) → abs(float(i - center))
     source = source.replace(
       /\b(abs|sign)\s*\(\s*(\w+\s*-\s*\w+)\s*\)/g,
       (match, fn, args) => `${fn}(float(${args}))`
+    );
+
+    // Fix min/max with int arguments: min(a, b) where a,b look like int vars
+    // Pattern: min/max(intExpr, intExpr) in loop contexts
+    source = source.replace(
+      /\b(min|max)\s*\(\s*(\w+\s*[+\-*/]\s*\w+)\s*,\s*(\w+)\s*\)/g,
+      (match, fn, arg1, arg2) => `${fn}(float(${arg1}), float(${arg2}))`
     );
 
     return source;
