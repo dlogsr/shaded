@@ -26,17 +26,25 @@ if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
 const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN || '';
 
+// Map model names to their latest version hashes (community models need this)
+const REPLICATE_VERSIONS = {
+  'schananas/grounded_sam': 'ee871c19efb1941f55f66a3d7d960428c8a5afcb77449547fe8e5a3ab9ebc21c'
+};
+
 async function runReplicate(model, input) {
   if (!REPLICATE_TOKEN) throw new Error('REPLICATE_API_TOKEN not set');
 
-  const res = await fetch(`https://api.replicate.com/v1/models/${model}/predictions`, {
+  const version = REPLICATE_VERSIONS[model];
+  if (!version) throw new Error(`Unknown model: ${model}`);
+
+  const res = await fetch('https://api.replicate.com/v1/predictions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${REPLICATE_TOKEN}`,
       'Content-Type': 'application/json',
       'Prefer': 'wait=60'
     },
-    body: JSON.stringify({ input })
+    body: JSON.stringify({ version, input })
   });
 
   if (!res.ok) {
