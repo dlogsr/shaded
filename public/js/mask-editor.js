@@ -109,23 +109,29 @@ export class MaskEditor {
     this.onChange(this.canvas);
   }
 
-  // Set mask from WebGL readPixels output (bottom-to-top RGBA)
-  setFromGLPixels(pixels, width, height) {
-    const imageData = this.ctx.createImageData(width, height);
-    for (let y = 0; y < height; y++) {
-      const srcRow = (height - 1 - y) * width * 4; // flip Y
-      const dstRow = y * width * 4;
-      for (let x = 0; x < width; x++) {
-        const srcIdx = srcRow + x * 4;
-        const dstIdx = dstRow + x * 4;
-        const val = pixels[srcIdx]; // red channel = mask value
-        imageData.data[dstIdx] = val;
-        imageData.data[dstIdx + 1] = val;
-        imageData.data[dstIdx + 2] = val;
-        imageData.data[dstIdx + 3] = 255;
+  // Render normalized polygons onto the mask canvas as white-on-black
+  setFromPolygons(polygons) {
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const ctx = this.ctx;
+
+    // Start with black (nothing selected)
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, w, h);
+
+    // Draw each polygon as white
+    ctx.fillStyle = '#ffffff';
+    for (const poly of polygons) {
+      if (!poly || poly.length < 3) continue;
+      ctx.beginPath();
+      ctx.moveTo(poly[0][0] * w, poly[0][1] * h);
+      for (let i = 1; i < poly.length; i++) {
+        ctx.lineTo(poly[i][0] * w, poly[i][1] * h);
       }
+      ctx.closePath();
+      ctx.fill();
     }
-    this.ctx.putImageData(imageData, 0, 0);
+
     this.onChange(this.canvas);
   }
 

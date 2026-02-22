@@ -155,7 +155,7 @@ app.post('/api/generate-shader', upload.single('image'), async (req, res) => {
   }
 });
 
-// Generate a mask shader to isolate an object/region
+// Generate a mask by having Claude identify object regions via coordinates
 app.post('/api/generate-mask', upload.single('image'), async (req, res) => {
   try {
     const { target } = req.body;
@@ -169,44 +169,31 @@ app.post('/api/generate-mask', upload.single('image'), async (req, res) => {
     const base64 = req.file.buffer.toString('base64');
     const mediaType = req.file.mimetype;
 
-    const maskSystemPrompt = `You are a WebGL GLSL shader expert specializing in image segmentation masks.
+    const maskSystemPrompt = `You are an image analysis expert. Given an image and a target object description, you identify the location of that object by outputting polygon coordinates that outline it.
 
-Given an image and a target object/region description, generate a WebGL 1.0 fragment shader that outputs a BLACK AND WHITE MASK:
-- WHITE (1.0, 1.0, 1.0) for pixels belonging to the target
-- BLACK (0.0, 0.0, 0.0) for pixels NOT belonging to the target
-- Use smooth transitions at edges (smoothstep) for clean selections
+You MUST respond with ONLY a valid JSON object (no markdown, no explanation, no code fences). The JSON format:
+
+{
+  "polygons": [
+    [[x1, y1], [x2, y2], [x3, y3], ...],
+    [[x1, y1], [x2, y2], ...]
+  ],
+  "confidence": 0.85
+}
 
 RULES:
-1. Use \`precision mediump float;\`
-2. Accept these uniforms:
-   - \`sampler2D u_image\` — the source image texture
-   - \`sampler2D u_mask\` — (unused for mask generation, but must be declared)
-   - \`vec2 u_resolution\` — canvas dimensions in pixels
-   - \`float u_time\` — (unused, but must be declared)
-   - \`float u_intensity\` — (unused, but must be declared)
-3. Use \`varying vec2 v_texCoord\` for texture coordinates (0.0 to 1.0)
-4. Output ONLY black and white. This is a MASK, not an effect.
-5. Analyze the image carefully and use the BEST combination of:
-   - Color/hue range detection (convert RGB to HSV)
-   - Saturation thresholds
-   - Luminance/brightness thresholds
-   - Position in the image (top/bottom/center/edges)
-   - Edge detection if needed
-   - Multiple criteria combined for accuracy
-6. Use smoothstep for soft edges between selected and unselected regions.
-7. The shader must compile under WebGL 1.0 (GLSL ES 1.0).
-8. CRITICAL — GLSL ES 1.0 INTEGER RESTRICTIONS:
-   - abs(), sign(), min(), max(), clamp(), mod() ONLY accept float/vec types, NEVER int.
-   - If you need abs of an int: use \`int a = x >= 0 ? x : -x;\` (ternary, NOT abs()).
-   - If you need min/max of ints: use \`int m = a < b ? a : b;\` (ternary, NOT min()/max()).
-   - For loop index math, cast to float: \`abs(float(i - center))\`.
-   - All arithmetic with these built-in functions MUST use float operands.
-
-Respond with ONLY the fragment shader code in a code block:
-\`\`\`glsl
-precision mediump float;
-// ... mask shader code ...
-\`\`\``;
+1. All coordinates are NORMALIZED (0.0 to 1.0) relative to image width and height.
+   - (0, 0) = top-left corner
+   - (1, 1) = bottom-right corner
+2. Each polygon is a list of [x, y] points forming a closed shape (the last point connects back to the first).
+3. Use enough points to accurately outline the object (typically 8-30 points per polygon).
+4. For complex shapes, use multiple polygons. For example, a car might need one polygon for the body.
+5. For simple regions like "sky" or "background", use rectangles or simple shapes that cover the region.
+6. For "sky": typically the upper portion of the image — use a polygon that follows the horizon line.
+7. For "ground"/"floor": typically the lower portion.
+8. Be as precise as possible — trace the actual object boundaries you see in the image.
+9. confidence is a float 0-1 indicating how confident you are in the selection.
+10. Output ONLY the JSON. No explanation, no markdown fences, no extra text.`;
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5',
@@ -221,17 +208,37 @@ precision mediump float;
           },
           {
             type: 'text',
-            text: `Generate a mask shader that selects ONLY: "${target.trim()}"\n\nLook at the image carefully. Identify the colors, positions, and visual characteristics of "${target.trim()}" in this specific image, then write a shader that isolates it as accurately as possible.`
+            text: `Identify and outline "${target.trim()}" in this image. Return polygon coordinates that tightly trace the boundaries of "${target.trim()}". Be precise — follow the actual edges of the object as closely as possible.`
           }
         ]
       }]
     });
 
-    const text = response.content[0].text;
-    const codeMatch = text.match(/```(?:glsl)?\s*\n([\s\S]*?)```/);
-    const shaderCode = codeMatch ? codeMatch[1].trim() : text.trim();
+    const text = response.content[0].text.trim();
 
-    res.json({ maskShader: shaderCode });
+    // Parse JSON — strip any accidental markdown fences
+    let cleaned = text;
+    const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+    if (jsonMatch) cleaned = jsonMatch[1].trim();
+
+    let maskData;
+    try {
+      maskData = JSON.parse(cleaned);
+    } catch (parseErr) {
+      // Try to extract JSON from the response
+      const braceMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (braceMatch) {
+        maskData = JSON.parse(braceMatch[0]);
+      } else {
+        throw new Error('Could not parse mask response as JSON');
+      }
+    }
+
+    if (!maskData.polygons || !Array.isArray(maskData.polygons)) {
+      throw new Error('Invalid mask response: missing polygons array');
+    }
+
+    res.json({ polygons: maskData.polygons, confidence: maskData.confidence || 0 });
   } catch (err) {
     console.error('Mask generation error:', err);
     res.status(500).json({ error: 'Failed to generate mask: ' + err.message });

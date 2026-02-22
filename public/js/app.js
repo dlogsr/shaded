@@ -389,30 +389,8 @@ async function generateAIMask() {
 
     const data = await res.json();
 
-    // Render the mask shader through WebGL to get pixel data, auto-fix on failure
-    let maskShaderCode = data.maskShader;
-    let maskResult;
-    try {
-      maskResult = renderer.renderMaskShader(maskShaderCode);
-    } catch (compileErr) {
-      showMaskStatus('<span class="spinner"></span>Mask shader had a compile error, auto-fixing...', 'loading');
-      try {
-        const fixRes = await fetch('/api/fix-shader', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ shader: maskShaderCode, error: compileErr.message })
-        });
-        if (!fixRes.ok) throw new Error('Fix request failed');
-        const fixData = await fixRes.json();
-        maskShaderCode = fixData.shader;
-        maskResult = renderer.renderMaskShader(maskShaderCode);
-      } catch (retryErr) {
-        throw new Error(`Mask shader failed to compile: ${compileErr.message}`);
-      }
-    }
-
-    // Write the GL pixels to the mask canvas
-    maskEditor.setFromGLPixels(maskResult.pixels, maskResult.width, maskResult.height);
+    // Render polygon-based mask onto the mask canvas
+    maskEditor.setFromPolygons(data.polygons);
 
     // Show the mask overlay so the user can see the result
     showMaskToggle.checked = true;

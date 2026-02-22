@@ -273,31 +273,6 @@ export class ShaderRenderer {
     this.currentShaderCode = null; // Don't count passthrough as a "real" shader
   }
 
-  // Render a mask shader and return the pixel data
-  renderMaskShader(fragmentSource) {
-    const gl = this.gl;
-    const savedShaderCode = this.currentShaderCode;
-
-    // Compile and render the mask shader
-    this.setShader(fragmentSource);
-    this.render();
-
-    // Read pixels (WebGL gives bottom-to-top)
-    const w = this.canvas.width;
-    const h = this.canvas.height;
-    const pixels = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-    // Restore previous shader
-    if (savedShaderCode) {
-      this.setShader(savedShaderCode);
-    } else {
-      this.renderPassthrough();
-    }
-
-    return { pixels, width: w, height: h };
-  }
-
   getCanvasDataURL() {
     this.render();
     return this.canvas.toDataURL('image/png');
