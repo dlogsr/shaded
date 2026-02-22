@@ -48,7 +48,14 @@ RULES:
 5. Always blend between original and effected color using the mask:
    \`gl_FragColor = vec4(mix(original.rgb, effected.rgb, mask * u_intensity), original.a);\`
 6. The shader must compile under WebGL 1.0 (GLSL ES 1.0). No WebGL 2.0 features.
-7. For selective/object-based effects, use image analysis techniques in the shader:
+7. CRITICAL — GLSL ES 1.0 INTEGER RESTRICTIONS:
+   - abs(), sign(), min(), max(), clamp(), mod() ONLY accept float/vec types, NEVER int.
+   - If you need abs of an int: use \`int a = x >= 0 ? x : -x;\` (ternary, NOT abs()).
+   - If you need min/max of ints: use \`int m = a < b ? a : b;\` (ternary, NOT min()/max()).
+   - NEVER write abs(intVar), min(intA, intB), max(intA, intB), or clamp(intX, intLo, intHi).
+   - For loop index math, cast to float first: \`abs(float(i - center))\`.
+   - All arithmetic with these built-in functions MUST use float operands.
+8. For selective/object-based effects, use image analysis techniques in the shader:
    - Color range detection (hue/saturation/brightness thresholds)
    - Position-based selection (e.g., upper region for sky)
    - Luminance-based selection
@@ -145,6 +152,131 @@ app.post('/api/generate-shader', upload.single('image'), async (req, res) => {
   } catch (err) {
     console.error('Shader generation error:', err);
     res.status(500).json({ error: 'Failed to generate shader: ' + err.message });
+  }
+});
+
+// Generate a mask shader to isolate an object/region
+app.post('/api/generate-mask', upload.single('image'), async (req, res) => {
+  try {
+    const { target } = req.body;
+    if (!target || !target.trim()) {
+      return res.status(400).json({ error: 'Target object/region is required' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'Image is required for mask generation' });
+    }
+
+    const base64 = req.file.buffer.toString('base64');
+    const mediaType = req.file.mimetype;
+
+    const maskSystemPrompt = `You are a WebGL GLSL shader expert specializing in image segmentation masks.
+
+Given an image and a target object/region description, generate a WebGL 1.0 fragment shader that outputs a BLACK AND WHITE MASK:
+- WHITE (1.0, 1.0, 1.0) for pixels belonging to the target
+- BLACK (0.0, 0.0, 0.0) for pixels NOT belonging to the target
+- Use smooth transitions at edges (smoothstep) for clean selections
+
+RULES:
+1. Use \`precision mediump float;\`
+2. Accept these uniforms:
+   - \`sampler2D u_image\` — the source image texture
+   - \`sampler2D u_mask\` — (unused for mask generation, but must be declared)
+   - \`vec2 u_resolution\` — canvas dimensions in pixels
+   - \`float u_time\` — (unused, but must be declared)
+   - \`float u_intensity\` — (unused, but must be declared)
+3. Use \`varying vec2 v_texCoord\` for texture coordinates (0.0 to 1.0)
+4. Output ONLY black and white. This is a MASK, not an effect.
+5. Analyze the image carefully and use the BEST combination of:
+   - Color/hue range detection (convert RGB to HSV)
+   - Saturation thresholds
+   - Luminance/brightness thresholds
+   - Position in the image (top/bottom/center/edges)
+   - Edge detection if needed
+   - Multiple criteria combined for accuracy
+6. Use smoothstep for soft edges between selected and unselected regions.
+7. The shader must compile under WebGL 1.0 (GLSL ES 1.0).
+8. CRITICAL — GLSL ES 1.0 INTEGER RESTRICTIONS:
+   - abs(), sign(), min(), max(), clamp(), mod() ONLY accept float/vec types, NEVER int.
+   - If you need abs of an int: use \`int a = x >= 0 ? x : -x;\` (ternary, NOT abs()).
+   - If you need min/max of ints: use \`int m = a < b ? a : b;\` (ternary, NOT min()/max()).
+   - For loop index math, cast to float: \`abs(float(i - center))\`.
+   - All arithmetic with these built-in functions MUST use float operands.
+
+Respond with ONLY the fragment shader code in a code block:
+\`\`\`glsl
+precision mediump float;
+// ... mask shader code ...
+\`\`\``;
+
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 4096,
+      system: maskSystemPrompt,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: mediaType, data: base64 }
+          },
+          {
+            type: 'text',
+            text: `Generate a mask shader that selects ONLY: "${target.trim()}"\n\nLook at the image carefully. Identify the colors, positions, and visual characteristics of "${target.trim()}" in this specific image, then write a shader that isolates it as accurately as possible.`
+          }
+        ]
+      }]
+    });
+
+    const text = response.content[0].text;
+    const codeMatch = text.match(/```(?:glsl)?\s*\n([\s\S]*?)```/);
+    const shaderCode = codeMatch ? codeMatch[1].trim() : text.trim();
+
+    res.json({ maskShader: shaderCode });
+  } catch (err) {
+    console.error('Mask generation error:', err);
+    res.status(500).json({ error: 'Failed to generate mask: ' + err.message });
+  }
+});
+
+// Auto-fix a shader that failed to compile
+app.post('/api/fix-shader', express.json(), async (req, res) => {
+  try {
+    const { shader, error } = req.body;
+    if (!shader || !error) {
+      return res.status(400).json({ error: 'Shader code and error message are required' });
+    }
+
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 4096,
+      system: `You are a WebGL GLSL shader expert. You fix broken fragment shaders.
+
+CRITICAL RULES for GLSL ES 1.0:
+- abs(), sign(), min(), max(), clamp(), mod() ONLY accept float/vec types, NEVER int.
+- If you need abs of an int: use \`int a = x >= 0 ? x : -x;\`
+- If you need min/max of ints: use ternary: \`a < b ? a : b\`
+- For loop index math, cast to float first: \`abs(float(i))\`
+- No WebGL 2.0 features. No integer built-in math functions.
+
+Respond with ONLY the fixed fragment shader code in a code block. No explanations.
+
+\`\`\`glsl
+// fixed shader
+\`\`\``,
+      messages: [{
+        role: 'user',
+        content: `This GLSL ES 1.0 fragment shader fails to compile with this error:\n\n${error}\n\nFix the shader so it compiles correctly under WebGL 1.0 / GLSL ES 1.0. Here is the broken shader:\n\n\`\`\`glsl\n${shader}\n\`\`\``
+      }]
+    });
+
+    const text = response.content[0].text;
+    const codeMatch = text.match(/```(?:glsl)?\s*\n([\s\S]*?)```/);
+    const fixedShader = codeMatch ? codeMatch[1].trim() : text.trim();
+
+    res.json({ shader: fixedShader });
+  } catch (err) {
+    console.error('Shader fix error:', err);
+    res.status(500).json({ error: 'Failed to fix shader: ' + err.message });
   }
 });
 

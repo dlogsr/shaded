@@ -17,6 +17,7 @@ const intensityValue = document.getElementById('intensityValue');
 const animateToggle = document.getElementById('animateToggle');
 const brushTool = document.getElementById('brushTool');
 const eraserTool = document.getElementById('eraserTool');
+const quickSelectTool = document.getElementById('quickSelectTool');
 const fillMaskBtn = document.getElementById('fillMaskBtn');
 const clearMaskBtn = document.getElementById('clearMaskBtn');
 const invertMaskBtn = document.getElementById('invertMaskBtn');
@@ -24,7 +25,16 @@ const brushSize = document.getElementById('brushSize');
 const brushSizeValue = document.getElementById('brushSizeValue');
 const brushSoftness = document.getElementById('brushSoftness');
 const brushSoftnessValue = document.getElementById('brushSoftnessValue');
+const brushControls = document.getElementById('brushControls');
+const quickSelectControls = document.getElementById('quickSelectControls');
+const qsTolerance = document.getElementById('qsTolerance');
+const qsToleranceValue = document.getElementById('qsToleranceValue');
+const qsGrow = document.getElementById('qsGrow');
+const qsGrowValue = document.getElementById('qsGrowValue');
 const showMaskToggle = document.getElementById('showMaskToggle');
+const aiMaskTarget = document.getElementById('aiMaskTarget');
+const aiMaskBtn = document.getElementById('aiMaskBtn');
+const aiMaskStatus = document.getElementById('aiMaskStatus');
 const saveShaderBtn = document.getElementById('saveShaderBtn');
 const downloadBtn = document.getElementById('downloadBtn');
 const glCanvas = document.getElementById('glCanvas');
@@ -116,17 +126,18 @@ function setupEventListeners() {
   });
 
   // Mask tools
-  brushTool.addEventListener('click', () => {
-    maskEditor.setMode('brush');
-    brushTool.classList.add('active');
-    eraserTool.classList.remove('active');
-  });
+  function setMaskTool(mode) {
+    maskEditor.setMode(mode);
+    brushTool.classList.toggle('active', mode === 'brush');
+    eraserTool.classList.toggle('active', mode === 'eraser');
+    quickSelectTool.classList.toggle('active', mode === 'quickselect');
+    brushControls.hidden = (mode === 'quickselect');
+    quickSelectControls.hidden = (mode !== 'quickselect');
+  }
 
-  eraserTool.addEventListener('click', () => {
-    maskEditor.setMode('eraser');
-    eraserTool.classList.add('active');
-    brushTool.classList.remove('active');
-  });
+  brushTool.addEventListener('click', () => setMaskTool('brush'));
+  eraserTool.addEventListener('click', () => setMaskTool('eraser'));
+  quickSelectTool.addEventListener('click', () => setMaskTool('quickselect'));
 
   fillMaskBtn.addEventListener('click', () => maskEditor.fill());
   clearMaskBtn.addEventListener('click', () => maskEditor.clear());
@@ -142,8 +153,27 @@ function setupEventListeners() {
     maskEditor.setSoftness(parseInt(brushSoftness.value) / 100);
   });
 
+  qsTolerance.addEventListener('input', () => {
+    qsToleranceValue.textContent = qsTolerance.value;
+    maskEditor.setTolerance(parseInt(qsTolerance.value));
+  });
+
+  qsGrow.addEventListener('input', () => {
+    qsGrowValue.textContent = `${qsGrow.value}px`;
+    maskEditor.setGrowRadius(parseInt(qsGrow.value));
+  });
+
   showMaskToggle.addEventListener('change', () => {
     maskEditor.setVisible(showMaskToggle.checked);
+  });
+
+  // AI Mask generation
+  aiMaskBtn.addEventListener('click', generateAIMask);
+  aiMaskTarget.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      generateAIMask();
+    }
   });
 
   // Save/Download
@@ -197,6 +227,7 @@ function handleImageFile(file) {
     renderer.renderPassthrough();
 
     maskEditor.resize(w, h);
+    maskEditor.setSourceImage(img);
     maskEditor.setActive(true);
 
     // Show preview
@@ -267,15 +298,30 @@ async function generateShader() {
 
     const data = await res.json();
 
-    // Try to compile and apply the shader
+    // Try to compile and apply the shader, auto-fix on failure
+    let shaderCode = data.shader;
     try {
-      renderer.setShader(data.shader);
+      renderer.setShader(shaderCode);
     } catch (compileErr) {
-      throw new Error(`Shader compilation failed: ${compileErr.message}`);
+      // Auto-retry: send the broken shader + error to Claude for fixing
+      showStatus('<span class="spinner"></span>Shader had a compile error, auto-fixing...', 'loading');
+      try {
+        const fixRes = await fetch('/api/fix-shader', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shader: shaderCode, error: compileErr.message })
+        });
+        if (!fixRes.ok) throw new Error('Fix request failed');
+        const fixData = await fixRes.json();
+        shaderCode = fixData.shader;
+        renderer.setShader(shaderCode);
+      } catch (retryErr) {
+        throw new Error(`Shader compilation failed: ${compileErr.message}`);
+      }
     }
 
     currentShader = {
-      code: data.shader,
+      code: shaderCode,
       name: data.name,
       description: data.description
     };
@@ -302,6 +348,84 @@ function showStatus(msg, type) {
   generateStatus.innerHTML = msg;
   generateStatus.className = `status ${type}`;
   generateStatus.hidden = false;
+}
+
+function showMaskStatus(msg, type) {
+  aiMaskStatus.innerHTML = msg;
+  aiMaskStatus.className = `status ${type}`;
+  aiMaskStatus.hidden = false;
+}
+
+// --- AI Mask Generation ---
+
+async function generateAIMask() {
+  const target = aiMaskTarget.value.trim();
+  if (!target) {
+    showMaskStatus('Type an object or region to select.', 'error');
+    return;
+  }
+  if (!loadedImage || !loadedImageFile) {
+    showMaskStatus('Upload an image first.', 'error');
+    return;
+  }
+
+  aiMaskBtn.disabled = true;
+  showMaskStatus('<span class="spinner"></span>Generating mask...', 'loading');
+
+  try {
+    const formData = new FormData();
+    formData.append('target', target);
+    formData.append('image', loadedImageFile);
+
+    const res = await fetch('/api/generate-mask', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Mask generation failed');
+    }
+
+    const data = await res.json();
+
+    // Render the mask shader through WebGL to get pixel data, auto-fix on failure
+    let maskShaderCode = data.maskShader;
+    let maskResult;
+    try {
+      maskResult = renderer.renderMaskShader(maskShaderCode);
+    } catch (compileErr) {
+      showMaskStatus('<span class="spinner"></span>Mask shader had a compile error, auto-fixing...', 'loading');
+      try {
+        const fixRes = await fetch('/api/fix-shader', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shader: maskShaderCode, error: compileErr.message })
+        });
+        if (!fixRes.ok) throw new Error('Fix request failed');
+        const fixData = await fixRes.json();
+        maskShaderCode = fixData.shader;
+        maskResult = renderer.renderMaskShader(maskShaderCode);
+      } catch (retryErr) {
+        throw new Error(`Mask shader failed to compile: ${compileErr.message}`);
+      }
+    }
+
+    // Write the GL pixels to the mask canvas
+    maskEditor.setFromGLPixels(maskResult.pixels, maskResult.width, maskResult.height);
+
+    // Show the mask overlay so the user can see the result
+    showMaskToggle.checked = true;
+    maskEditor.setVisible(true);
+
+    showMaskStatus(`Selected: "${target}"`, 'success');
+    setTimeout(() => { aiMaskStatus.hidden = true; }, 3000);
+
+  } catch (err) {
+    showMaskStatus(`Error: ${err.message}`, 'error');
+  } finally {
+    aiMaskBtn.disabled = false;
+  }
 }
 
 // --- Shader Library ---

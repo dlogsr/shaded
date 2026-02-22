@@ -59,24 +59,56 @@
 
       <section class="mask-section">
         <h2>Selective Edit Mask</h2>
-        <p class="hint">Paint a mask to limit where the effect applies. White = effect, Black = original.</p>
-        <div class="mask-tools">
-          <button type="button" id="brushTool" class="btn-tool active" title="Brush (paint white)">Brush</button>
-          <button type="button" id="eraserTool" class="btn-tool" title="Eraser (paint black)">Eraser</button>
-          <button type="button" id="fillMaskBtn" class="btn-tool" title="Fill entire mask white">Fill</button>
-          <button type="button" id="clearMaskBtn" class="btn-tool" title="Clear mask to black">Clear</button>
-          <button type="button" id="invertMaskBtn" class="btn-tool" title="Invert mask">Invert</button>
+        <p class="hint">White = effect applies, Black = original. Use the tools below to build your mask.</p>
+
+        <div class="mask-subsection">
+          <h3>AI Object Select</h3>
+          <div class="ai-mask-row">
+            <input type="text" id="aiMaskTarget" placeholder="e.g. sky, person, hair, car...">
+            <button type="button" id="aiMaskBtn" class="btn-primary btn-sm">Select</button>
+          </div>
+          <div id="aiMaskStatus" class="status" hidden></div>
         </div>
-        <label>
-          Brush Size
-          <input type="range" id="brushSize" min="2" max="100" value="20">
-          <span id="brushSizeValue">20px</span>
-        </label>
-        <label>
-          Brush Softness
-          <input type="range" id="brushSoftness" min="0" max="100" value="50">
-          <span id="brushSoftnessValue">50%</span>
-        </label>
+
+        <div class="mask-subsection">
+          <h3>Tools</h3>
+          <div class="mask-tools">
+            <button type="button" id="brushTool" class="btn-tool active" title="Brush (paint white)">Brush</button>
+            <button type="button" id="eraserTool" class="btn-tool" title="Eraser (paint black)">Eraser</button>
+            <button type="button" id="quickSelectTool" class="btn-tool" title="Quick Select — click to select similar colors">Quick Select</button>
+            <button type="button" id="fillMaskBtn" class="btn-tool" title="Fill entire mask white">Fill</button>
+            <button type="button" id="clearMaskBtn" class="btn-tool" title="Clear mask to black">Clear</button>
+            <button type="button" id="invertMaskBtn" class="btn-tool" title="Invert mask">Invert</button>
+          </div>
+        </div>
+
+        <div id="brushControls">
+          <label>
+            Brush Size
+            <input type="range" id="brushSize" min="2" max="100" value="20">
+            <span id="brushSizeValue">20px</span>
+          </label>
+          <label>
+            Brush Softness
+            <input type="range" id="brushSoftness" min="0" max="100" value="50">
+            <span id="brushSoftnessValue">50%</span>
+          </label>
+        </div>
+
+        <div id="quickSelectControls" hidden>
+          <label>
+            Tolerance
+            <input type="range" id="qsTolerance" min="1" max="100" value="32">
+            <span id="qsToleranceValue">32</span>
+          </label>
+          <label>
+            Grow Radius
+            <input type="range" id="qsGrow" min="0" max="20" value="2">
+            <span id="qsGrowValue">2px</span>
+          </label>
+          <p class="hint">Click image to select similar colors. Shift+click to add. Alt+click to subtract.</p>
+        </div>
+
         <label>
           <input type="checkbox" id="showMaskToggle"> Show mask overlay
         </label>
