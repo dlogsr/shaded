@@ -120,6 +120,37 @@ export class ShaderRenderer {
     if (this.program && this.imageLoaded) this.render();
   }
 
+  // Preprocess shader to fix common GLSL ES 1.0 issues
+  _sanitizeShader(source) {
+    // Inject integer math helpers after precision line to avoid
+    // "no matching overloaded function found" errors for abs/min/max/clamp with int args.
+    // Uses unique names to avoid conflicts with built-in float overloads.
+    const helpers = `
+// GLSL ES 1.0 integer math helpers (auto-injected)
+int _iabs(int x) { return x >= 0 ? x : -x; }
+int _imin(int a, int b) { return a < b ? a : b; }
+int _imax(int a, int b) { return a > b ? a : b; }
+int _iclamp(int x, int lo, int hi) { return _imin(_imax(x, lo), hi); }
+`;
+    // Insert helpers after the precision statement
+    const precisionMatch = source.match(/precision\s+(lowp|mediump|highp)\s+float\s*;/);
+    if (precisionMatch) {
+      const idx = source.indexOf(precisionMatch[0]) + precisionMatch[0].length;
+      source = source.slice(0, idx) + helpers + source.slice(idx);
+    }
+
+    // Fix common patterns: abs/min/max/clamp called with int-typed loop variables
+    // Pattern: abs( <int expression> ) where int expression involves loop vars or int casts
+    // We wrap int arguments of abs/min/max/clamp in float() casts
+    // This regex targets: abs(someVar - someVar) patterns common in convolution loops
+    source = source.replace(
+      /\b(abs|sign)\s*\(\s*(\w+\s*-\s*\w+)\s*\)/g,
+      (match, fn, args) => `${fn}(float(${args}))`
+    );
+
+    return source;
+  }
+
   setShader(fragmentSource) {
     const gl = this.gl;
 
@@ -132,6 +163,9 @@ export class ShaderRenderer {
         v_texCoord = a_texCoord;
       }
     `;
+
+    // Sanitize the shader to fix common GLSL ES 1.0 issues
+    fragmentSource = this._sanitizeShader(fragmentSource);
 
     if (this.program) {
       gl.deleteProgram(this.program);
@@ -249,6 +283,31 @@ export class ShaderRenderer {
     `;
     this.setShader(passthroughShader);
     this.currentShaderCode = null; // Don't count passthrough as a "real" shader
+  }
+
+  // Render a mask shader and return the pixel data
+  renderMaskShader(fragmentSource) {
+    const gl = this.gl;
+    const savedShaderCode = this.currentShaderCode;
+
+    // Compile and render the mask shader
+    this.setShader(fragmentSource);
+    this.render();
+
+    // Read pixels (WebGL gives bottom-to-top)
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const pixels = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+    // Restore previous shader
+    if (savedShaderCode) {
+      this.setShader(savedShaderCode);
+    } else {
+      this.renderPassthrough();
+    }
+
+    return { pixels, width: w, height: h };
   }
 
   getCanvasDataURL() {
