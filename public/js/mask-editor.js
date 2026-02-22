@@ -5,7 +5,7 @@ export class MaskEditor {
     this.ctx = canvas.getContext('2d');
     this.onChange = onChange;
     this.painting = false;
-    this.mode = 'brush'; // 'brush', 'eraser', or 'quickselect'
+    this.mode = 'brush'; // 'brush', 'eraser', 'quickselect', or 'sam'
     this.brushSize = 20;
     this.softness = 0.5;
     this.active = false;
@@ -16,6 +16,9 @@ export class MaskEditor {
     this.sourceImageData = null;
     this.sourceWidth = 0;
     this.sourceHeight = 0;
+
+    // SAM click callback (set by app.js)
+    this.onSamClick = null;
 
     this._bindEvents();
   }
@@ -133,6 +136,48 @@ export class MaskEditor {
     }
 
     this.onChange(this.canvas);
+  }
+
+  // Apply a mask from a data URI image (used by SAM integration)
+  setFromImage(dataUri, additive = false) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+
+        // Draw the incoming mask onto a temp canvas at our dimensions
+        const tmp = document.createElement('canvas');
+        tmp.width = w;
+        tmp.height = h;
+        const tmpCtx = tmp.getContext('2d');
+        tmpCtx.drawImage(img, 0, 0, w, h);
+        const incoming = tmpCtx.getImageData(0, 0, w, h);
+
+        if (additive) {
+          // Merge: OR the incoming mask with the current mask
+          const current = this.ctx.getImageData(0, 0, w, h);
+          for (let i = 0; i < current.data.length; i += 4) {
+            if (incoming.data[i] > 127) {
+              current.data[i] = 255;
+              current.data[i + 1] = 255;
+              current.data[i + 2] = 255;
+            }
+          }
+          this.ctx.putImageData(current, 0, 0);
+        } else {
+          // Replace: clear to black then draw the incoming mask
+          this.ctx.fillStyle = '#000000';
+          this.ctx.fillRect(0, 0, w, h);
+          this.ctx.drawImage(img, 0, 0, w, h);
+        }
+
+        this.onChange(this.canvas);
+        resolve();
+      };
+      img.onerror = () => reject(new Error('Failed to load mask image'));
+      img.src = dataUri;
+    });
   }
 
   // --- Quick Select (flood-fill based) ---
@@ -290,6 +335,18 @@ export class MaskEditor {
     const startPaint = (e) => {
       if (!this.active) return;
       e.preventDefault();
+
+      if (this.mode === 'sam') {
+        if (this.onSamClick) {
+          const pos = this._getPos(e);
+          const additive = e.shiftKey;
+          // Normalize coordinates to 0-1
+          const nx = pos.x / this.canvas.width;
+          const ny = pos.y / this.canvas.height;
+          this.onSamClick(nx, ny, additive);
+        }
+        return;
+      }
 
       if (this.mode === 'quickselect') {
         const pos = this._getPos(e);

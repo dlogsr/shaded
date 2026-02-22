@@ -22,6 +22,53 @@ const SHADERS_FILE = join(DATA_DIR, 'shaders.json');
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
+// --- SAM / Replicate integration ---
+
+const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN || '';
+
+async function runReplicate(model, input) {
+  if (!REPLICATE_TOKEN) throw new Error('REPLICATE_API_TOKEN not set');
+
+  const res = await fetch(`https://api.replicate.com/v1/models/${model}/predictions`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${REPLICATE_TOKEN}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'wait=120'
+    },
+    body: JSON.stringify({ input })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Replicate API error ${res.status}`);
+  }
+
+  const prediction = await res.json();
+
+  if (prediction.status === 'succeeded') return prediction.output;
+  if (prediction.status === 'failed') throw new Error(prediction.error || 'Prediction failed');
+
+  // Not done yet — poll
+  return await pollReplicate(prediction.urls.get);
+}
+
+async function pollReplicate(url) {
+  for (let i = 0; i < 120; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` }
+    });
+    const data = await res.json();
+    if (data.status === 'succeeded') return data.output;
+    if (data.status === 'failed' || data.status === 'canceled') {
+      throw new Error(data.error || 'Prediction failed');
+    }
+  }
+  throw new Error('Prediction timed out');
+}
+
+
 function loadShaders() {
   if (!existsSync(SHADERS_FILE)) return [];
   return JSON.parse(readFileSync(SHADERS_FILE, 'utf-8'));
@@ -91,6 +138,119 @@ Respond with ONLY the fragment shader code wrapped in a code block. No explanati
 precision mediump float;
 // ... your shader code ...
 \`\`\``;
+
+// --- SAM endpoints ---
+
+// Check if SAM is available (Replicate token set)
+app.get('/api/sam-status', (_req, res) => {
+  res.json({ available: !!REPLICATE_TOKEN });
+});
+
+// Text-based segmentation using Grounded SAM (GroundingDINO + SAM)
+app.post('/api/sam-segment', upload.single('image'), async (req, res) => {
+  try {
+    if (!REPLICATE_TOKEN) {
+      return res.status(503).json({ error: 'SAM requires REPLICATE_API_TOKEN environment variable' });
+    }
+
+    const { prompt, negative_prompt, adjustment } = req.body;
+    if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
+    if (!req.file) return res.status(400).json({ error: 'Image is required' });
+
+    const base64 = req.file.buffer.toString('base64');
+    const dataUri = `data:${req.file.mimetype};base64,${base64}`;
+
+    const input = {
+      image: dataUri,
+      mask_prompt: prompt.trim()
+    };
+    if (negative_prompt && negative_prompt.trim()) {
+      input.negative_mask_prompt = negative_prompt.trim();
+    }
+    if (adjustment) {
+      input.adjustment_factor = parseInt(adjustment) || 0;
+    }
+
+    const output = await runReplicate('schananas/grounded_sam', input);
+
+    // output is an array of mask image URIs
+    const maskUrl = Array.isArray(output) ? output[0] : output;
+    if (!maskUrl) throw new Error('No mask returned');
+
+    // Download the mask image and return as data URI
+    const maskRes = await fetch(maskUrl);
+    if (!maskRes.ok) throw new Error('Failed to download mask');
+    const maskBuffer = Buffer.from(await maskRes.arrayBuffer());
+    const maskBase64 = maskBuffer.toString('base64');
+
+    res.json({ mask: `data:image/png;base64,${maskBase64}` });
+  } catch (err) {
+    console.error('SAM segment error:', err);
+    res.status(500).json({ error: 'SAM segmentation failed: ' + err.message });
+  }
+});
+
+// Click-to-segment: identify object at click point via Claude, then segment with Grounded SAM
+app.post('/api/sam-click', upload.single('image'), async (req, res) => {
+  try {
+    if (!REPLICATE_TOKEN) {
+      return res.status(503).json({ error: 'SAM requires REPLICATE_API_TOKEN environment variable' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Image is required' });
+
+    const { x, y } = req.body; // normalized 0-1 coordinates
+    if (x == null || y == null) {
+      return res.status(400).json({ error: 'Click coordinates (x, y) are required' });
+    }
+
+    const base64 = req.file.buffer.toString('base64');
+    const mediaType = req.file.mimetype;
+    const dataUri = `data:${mediaType};base64,${base64}`;
+
+    const nx = parseFloat(x);
+    const ny = parseFloat(y);
+
+    // Step 1: Ask Claude to identify the object at the click point
+    const identifyResponse = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 100,
+      system: 'You identify objects in images at specific coordinates. Respond with ONLY the object name (1-3 words, lowercase). No explanation, no punctuation. Examples: "sky", "red car", "person", "tree", "grass", "building".',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+          { type: 'text', text: `What object or region is at position (${(nx * 100).toFixed(0)}% from left, ${(ny * 100).toFixed(0)}% from top) in this image? Reply with just the object name.` }
+        ]
+      }]
+    });
+
+    const objectName = identifyResponse.content[0].text.trim().toLowerCase();
+
+    // Step 2: Use Grounded SAM to get a precise mask for the identified object
+    const samInput = {
+      image: dataUri,
+      mask_prompt: objectName
+    };
+
+    const output = await runReplicate('schananas/grounded_sam', samInput);
+
+    const maskUrl = Array.isArray(output) ? output[0] : output;
+    if (!maskUrl) throw new Error('No mask returned from SAM');
+
+    const maskRes = await fetch(maskUrl);
+    if (!maskRes.ok) throw new Error('Failed to download mask');
+    const maskBuffer = Buffer.from(await maskRes.arrayBuffer());
+    const maskBase64 = maskBuffer.toString('base64');
+
+    res.json({
+      mask: `data:image/png;base64,${maskBase64}`,
+      objectName
+    });
+  } catch (err) {
+    console.error('SAM click error:', err);
+    res.status(500).json({ error: 'SAM click-to-segment failed: ' + err.message });
+  }
+});
 
 // Generate shader from image + description
 app.post('/api/generate-shader', upload.single('image'), async (req, res) => {
