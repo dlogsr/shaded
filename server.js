@@ -34,7 +34,7 @@ async function runReplicate(model, input) {
     headers: {
       'Authorization': `Bearer ${REPLICATE_TOKEN}`,
       'Content-Type': 'application/json',
-      'Prefer': 'wait=120'
+      'Prefer': 'wait=60'
     },
     body: JSON.stringify({ input })
   });
