@@ -1,5 +1,6 @@
 import { ShaderRenderer } from './renderer.js';
 import { MaskEditor } from './mask-editor.js';
+import { PRESETS } from './presets.js';
 
 // DOM Elements
 const dropZone = document.getElementById('dropZone');
@@ -49,6 +50,11 @@ const samSelectTool = document.getElementById('samSelectTool');
 const samSelectControls = document.getElementById('samSelectControls');
 const samSelectStatus = document.getElementById('samSelectStatus');
 const samBadge = document.getElementById('samBadge');
+const presetGrid = document.getElementById('presetGrid');
+const paramControls = document.getElementById('paramControls');
+const paramLabel = document.getElementById('paramLabel');
+const paramSlider = document.getElementById('paramSlider');
+const paramValue = document.getElementById('paramValue');
 const saveDialog = document.getElementById('saveDialog');
 const saveShaderName = document.getElementById('saveShaderName');
 const saveDialogCancel = document.getElementById('saveDialogCancel');
@@ -67,6 +73,7 @@ let currentShader = null;
 let shaderLibrary = [];
 let renamingId = null;
 let samAvailable = false;
+let activePresetId = null;
 
 // Initialize
 async function init() {
@@ -95,6 +102,7 @@ async function init() {
   // Wire up SAM click handler on the mask editor
   maskEditor.onSamClick = handleSamClick;
 
+  renderPresets();
   loadLibrary();
   setupEventListeners();
 }
@@ -201,6 +209,13 @@ function setupEventListeners() {
     maskEditor.setVisible(showMaskToggle.checked);
   });
 
+  // Param slider (for presets like Retro Pixelate's Rainbow control)
+  paramSlider.addEventListener('input', () => {
+    const v = paramSlider.value / 100;
+    paramValue.textContent = `${paramSlider.value}%`;
+    renderer.setParam(v);
+  });
+
   // AI Mask generation
   aiMaskBtn.addEventListener('click', generateAIMask);
   aiMaskTarget.addEventListener('keydown', (e) => {
@@ -237,20 +252,78 @@ function setupEventListeners() {
 
 // --- Image Handling ---
 
-function handleImageFile(file) {
-  loadedImageFile = file;
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4MB target (leaves headroom for base64)
+const MAX_DIM = 2048;
+
+// Downsample an image to fit within maxBytes, returning a File-like Blob
+function downsampleImage(file, img, maxBytes) {
+  return new Promise((resolve) => {
+    // If already small enough and within dimension limits, keep original
+    if (file.size <= maxBytes && img.naturalWidth <= MAX_DIM && img.naturalHeight <= MAX_DIM) {
+      resolve(file);
+      return;
+    }
+
+    let w = img.naturalWidth;
+    let h = img.naturalHeight;
+
+    // Cap dimensions
+    if (w > MAX_DIM || h > MAX_DIM) {
+      const scale = MAX_DIM / Math.max(w, h);
+      w = Math.round(w * scale);
+      h = Math.round(h * scale);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+
+    // Try progressively lower JPEG quality
+    function tryQuality(quality) {
+      canvas.toBlob((blob) => {
+        if (blob.size <= maxBytes || quality <= 0.3) {
+          // Good enough or can't go lower — wrap as File
+          const result = new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' });
+          resolve(result);
+        } else if (quality <= 0.5 && blob.size > maxBytes) {
+          // Quality alone isn't enough — halve dimensions and retry
+          w = Math.round(w * 0.7);
+          h = Math.round(h * 0.7);
+          canvas.width = w;
+          canvas.height = h;
+          ctx.drawImage(img, 0, 0, w, h);
+          tryQuality(0.8);
+        } else {
+          tryQuality(quality - 0.05);
+        }
+      }, 'image/jpeg', quality);
+    }
+
+    // If file is already under maxBytes, just re-encode at high quality for the dimension cap
+    if (file.size <= maxBytes) {
+      tryQuality(0.92);
+    } else {
+      tryQuality(0.92);
+    }
+  });
+}
+
+async function handleImageFile(file) {
   const url = URL.createObjectURL(file);
 
   const img = new Image();
-  img.onload = () => {
+  img.onload = async () => {
+    // Downsample if needed (for upload to server)
+    loadedImageFile = await downsampleImage(file, img, MAX_UPLOAD_BYTES);
     loadedImage = img;
 
     // Limit canvas size for performance
-    const maxDim = 2048;
     let w = img.naturalWidth;
     let h = img.naturalHeight;
-    if (w > maxDim || h > maxDim) {
-      const scale = maxDim / Math.max(w, h);
+    if (w > MAX_DIM || h > MAX_DIM) {
+      const scale = MAX_DIM / Math.max(w, h);
       w = Math.round(w * scale);
       h = Math.round(h * scale);
     }
@@ -359,6 +432,12 @@ async function generateShader() {
       name: data.name,
       description: data.description
     };
+
+    // Clear preset state
+    activePresetId = null;
+    paramControls.hidden = true;
+    renderer.setParam(0.0);
+    presetGrid.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
 
     // Update UI
     shaderInfo.hidden = false;
@@ -529,6 +608,63 @@ async function handleSamClick(nx, ny, additive) {
   }
 }
 
+// --- Presets ---
+
+function renderPresets() {
+  presetGrid.innerHTML = PRESETS.map(p =>
+    `<button type="button" class="preset-btn" data-preset="${p.id}" title="${p.description}">${p.name}</button>`
+  ).join('');
+
+  presetGrid.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+  });
+}
+
+function applyPreset(id) {
+  const preset = PRESETS.find(p => p.id === id);
+  if (!preset) return;
+
+  if (!loadedImage) {
+    showStatus('Upload an image first.', 'error');
+    return;
+  }
+
+  try {
+    renderer.setShader(preset.code);
+    currentShader = {
+      code: preset.code,
+      name: preset.name,
+      description: preset.description
+    };
+    activePresetId = id;
+
+    // Show/hide param slider
+    if (preset.paramLabel) {
+      paramLabel.textContent = preset.paramLabel;
+      paramControls.hidden = false;
+    } else {
+      paramControls.hidden = true;
+      renderer.setParam(0.0);
+      paramSlider.value = 0;
+      paramValue.textContent = '0%';
+    }
+
+    // Update UI
+    shaderInfo.hidden = false;
+    currentShaderName.textContent = preset.name;
+    currentShaderDesc.textContent = preset.description;
+
+    // Highlight active preset button
+    presetGrid.querySelectorAll('.preset-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.preset === id);
+    });
+
+    updateActionButtons();
+  } catch (err) {
+    showStatus(`Failed to apply preset: ${err.message}`, 'error');
+  }
+}
+
 // --- Shader Library ---
 
 async function loadLibrary() {
@@ -591,6 +727,12 @@ function applyLibraryShader(id) {
   try {
     renderer.setShader(shader.code);
     currentShader = { ...shader };
+
+    // Clear preset state
+    activePresetId = null;
+    paramControls.hidden = true;
+    renderer.setParam(0.0);
+    presetGrid.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
 
     shaderInfo.hidden = false;
     currentShaderName.textContent = shader.name;

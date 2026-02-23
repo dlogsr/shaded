@@ -43,6 +43,11 @@
 
         <button type="button" id="generateBtn" class="btn-primary">Generate Shader</button>
         <div id="generateStatus" class="status" hidden></div>
+
+        <div class="preset-subsection">
+          <h3>Presets</h3>
+          <div class="preset-grid" id="presetGrid"></div>
+        </div>
       </section>
 
       <section class="controls-section">
@@ -55,6 +60,13 @@
         <label>
           <input type="checkbox" id="animateToggle"> Animate (time-based effects)
         </label>
+        <div id="paramControls" hidden>
+          <label>
+            <span id="paramLabel">Param</span>
+            <input type="range" id="paramSlider" min="0" max="100" value="0">
+            <span id="paramValue">0%</span>
+          </label>
+        </div>
       </section>
 
       <section class="mask-section">
