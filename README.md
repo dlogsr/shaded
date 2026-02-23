@@ -2,6 +2,8 @@
 
 AI-powered image shader editor. Describe a visual effect in plain English and Shaded generates a real-time WebGL fragment shader for it. Combine with AI object segmentation to apply effects selectively to specific regions of your image.
 
+Built using Claude Code by Ryan Dumlao
+
 ## Features
 
 - **Text-to-shader generation** — Describe any effect ("vintage sepia with film grain", "cyberpunk neon glow on edges", "tilt-shift blur") and Claude generates a working GLSL fragment shader
