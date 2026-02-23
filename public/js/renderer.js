@@ -11,6 +11,7 @@ export class ShaderRenderer {
     this.animating = false;
     this.startTime = 0;
     this.intensity = 1.0;
+    this.param = 0.0;
     this.frameId = null;
     this.currentShaderCode = null;
     this.imageLoaded = false;
@@ -188,6 +189,11 @@ export class ShaderRenderer {
     if (this.program && this.imageLoaded) this.render();
   }
 
+  setParam(value) {
+    this.param = value;
+    if (this.program && this.imageLoaded) this.render();
+  }
+
   setAnimating(on) {
     this.animating = on;
     if (on) {
@@ -240,6 +246,9 @@ export class ShaderRenderer {
 
     const intLoc = gl.getUniformLocation(this.program, 'u_intensity');
     if (intLoc) gl.uniform1f(intLoc, this.intensity);
+
+    const paramLoc = gl.getUniformLocation(this.program, 'u_param');
+    if (paramLoc) gl.uniform1f(paramLoc, this.param);
 
     // Set up attributes
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
