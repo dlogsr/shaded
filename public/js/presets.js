@@ -1,6 +1,6 @@
 // Built-in preset shaders for Shaded
 // Each preset follows WebGL 1.0 / GLSL ES 1.0 rules and uses the standard uniforms:
-//   u_image, u_mask, u_resolution, u_time, u_intensity, u_param
+//   u_image, u_mask, u_resolution, u_time, u_intensity, u_param0-u_param3
 
 export const PRESETS = [
 
@@ -9,18 +9,30 @@ export const PRESETS = [
     id: 'glow-edges',
     name: 'Glowing Edges',
     description: 'Extreme glowing edges with lens flare',
+    params: [
+      { label: 'Edge Strength', default: 0.5 },
+      { label: 'Glow Spread', default: 0.5 },
+      { label: 'Flare', default: 0.5 },
+    ],
     code: `precision mediump float;
 uniform sampler2D u_image;
 uniform sampler2D u_mask;
 uniform vec2 u_resolution;
 uniform float u_time;
 uniform float u_intensity;
+uniform float u_param0; // Edge Strength
+uniform float u_param1; // Glow Spread
+uniform float u_param2; // Flare
 varying vec2 v_texCoord;
 
 void main() {
   vec2 px = 1.0 / u_resolution;
   vec4 original = texture2D(u_image, v_texCoord);
   float mask = texture2D(u_mask, v_texCoord).r;
+
+  float edgeMul = 1.0 + u_param0 * 4.0; // 1x to 5x
+  float glowMul = 2.0 + u_param1 * 8.0; // 2x to 10x
+  float flareMul = 0.2 + u_param2 * 1.0; // 0.2 to 1.2
 
   // Sobel edge detection
   float tl = dot(texture2D(u_image, v_texCoord + vec2(-px.x, -px.y)).rgb, vec3(0.299, 0.587, 0.114));
@@ -36,8 +48,8 @@ void main() {
   float gy = -tl - 2.0*t - tr + bl + 2.0*b + br;
   float edge = sqrt(gx*gx + gy*gy);
 
-  // Boost edges for extreme glow
-  edge = pow(clamp(edge * 3.0, 0.0, 1.0), 0.6);
+  // Boost edges with param-driven strength
+  edge = pow(clamp(edge * edgeMul, 0.0, 1.0), 0.6);
 
   // Color the edges based on angle
   float angle = atan(gy, gx);
@@ -51,13 +63,12 @@ void main() {
       vec2 off = vec2(float(i), float(j)) * px * 3.0;
       vec4 s = texture2D(u_image, v_texCoord + off);
       float sl = dot(s.rgb, vec3(0.299, 0.587, 0.114));
-      // Quick edge approx for blur samples
       vec4 s2 = texture2D(u_image, v_texCoord + off + px);
       float sl2 = dot(s2.rgb, vec3(0.299, 0.587, 0.114));
       glow += abs(sl - sl2);
     }
   }
-  glow = glow / 49.0 * 6.0;
+  glow = glow / 49.0 * glowMul;
   glow = pow(clamp(glow, 0.0, 1.0), 0.5);
 
   // Lens flare from image center
@@ -65,7 +76,6 @@ void main() {
   vec2 toCenter = v_texCoord - center;
   float dist = length(toCenter);
   float flare = 0.0;
-  // Radial streak
   for (int i = 1; i <= 8; i++) {
     vec2 samplePos = v_texCoord - toCenter * float(i) * 0.04;
     float s = dot(texture2D(u_image, samplePos).rgb, vec3(0.299, 0.587, 0.114));
@@ -75,7 +85,7 @@ void main() {
   vec3 flareColor = vec3(1.0, 0.8, 0.5) * flare * (1.0 - dist);
 
   // Combine
-  vec3 effected = edge * edgeColor * 2.5 + glow * edgeColor * 0.8 + flareColor * 0.6;
+  vec3 effected = edge * edgeColor * 2.5 + glow * edgeColor * 0.8 + flareColor * flareMul;
   effected = clamp(effected, 0.0, 1.0);
 
   gl_FragColor = vec4(mix(original.rgb, effected, mask * u_intensity), original.a);
@@ -87,12 +97,20 @@ void main() {
     id: 'comic-book',
     name: 'Comic Book',
     description: 'Halftone dots, outlines, boosted saturation',
+    params: [
+      { label: 'Dot Size', default: 0.4 },
+      { label: 'Outline', default: 0.5 },
+      { label: 'Saturation', default: 0.5 },
+    ],
     code: `precision mediump float;
 uniform sampler2D u_image;
 uniform sampler2D u_mask;
 uniform vec2 u_resolution;
 uniform float u_time;
 uniform float u_intensity;
+uniform float u_param0; // Dot Size
+uniform float u_param1; // Outline
+uniform float u_param2; // Saturation
 varying vec2 v_texCoord;
 
 vec3 rgb2hsv(vec3 c) {
@@ -115,36 +133,30 @@ void main() {
   float mask = texture2D(u_mask, v_texCoord).r;
   vec2 px = 1.0 / u_resolution;
 
+  float cellSize = 4.0 + u_param0 * 20.0; // 4 to 24
+  float outlineStr = u_param1; // 0 to 1
+  float satBoost = 1.0 + u_param2 * 1.0; // 1x to 2x
+
   // --- Halftone dots ---
-  float cellSize = 12.0; // Large spacing between dots
   vec2 pixelCoord = v_texCoord * u_resolution;
   vec2 cellCenter = (floor(pixelCoord / cellSize) + 0.5) * cellSize;
   vec2 cellUV = cellCenter / u_resolution;
 
-  // Sample color at cell center
   vec3 cellColor = texture2D(u_image, cellUV).rgb;
-
-  // Luminance determines dot size — darker = bigger dot
   float lum = dot(cellColor, vec3(0.299, 0.587, 0.114));
-  // Invert: dark areas get big dots, light areas get small/no dots
   float dotRadius = (1.0 - lum) * cellSize * 0.42;
-
-  // Distance from pixel to cell center
   float d = length(pixelCoord - cellCenter);
-
-  // Sharp circle: inside dot = dark shading, outside = white paper
   float inDot = step(d, dotRadius);
 
-  // Boost saturation and brightness of the cell color
+  // Boost saturation and brightness
   vec3 hsv = rgb2hsv(cellColor);
-  hsv.y = min(hsv.y * 1.6, 1.0);  // Boost saturation
-  hsv.z = min(hsv.z * 1.15 + 0.08, 1.0); // Brighter overall
+  hsv.y = min(hsv.y * satBoost, 1.0);
+  hsv.z = min(hsv.z * 1.15 + 0.08, 1.0);
   vec3 boostedColor = hsv2rgb(hsv);
 
-  // Paper white background with colored dots
   vec3 halftone = mix(vec3(1.0), boostedColor * 0.3, inDot);
 
-  // --- Subtle edge outlines ---
+  // --- Edge outlines ---
   float tl = dot(texture2D(u_image, v_texCoord + vec2(-px.x, -px.y)).rgb, vec3(0.299, 0.587, 0.114));
   float t  = dot(texture2D(u_image, v_texCoord + vec2( 0.0,  -px.y)).rgb, vec3(0.299, 0.587, 0.114));
   float tr = dot(texture2D(u_image, v_texCoord + vec2( px.x, -px.y)).rgb, vec3(0.299, 0.587, 0.114));
@@ -159,8 +171,7 @@ void main() {
   float edge = sqrt(gx*gx + gy*gy);
   float outline = smoothstep(0.15, 0.4, edge);
 
-  // Combine: halftone with subtle dark outlines
-  vec3 effected = halftone * (1.0 - outline * 0.7);
+  vec3 effected = halftone * (1.0 - outline * outlineStr);
 
   gl_FragColor = vec4(mix(original.rgb, effected, mask * u_intensity), original.a);
 }`
@@ -171,14 +182,20 @@ void main() {
     id: 'retro-pixelate',
     name: 'Retro Pixelate',
     description: 'Pixelated retro palette with outlined edges',
-    paramLabel: 'Rainbow',
+    params: [
+      { label: 'Pixel Size', default: 0.3 },
+      { label: 'Rainbow', default: 0.0 },
+      { label: 'Color Levels', default: 0.4 },
+    ],
     code: `precision mediump float;
 uniform sampler2D u_image;
 uniform sampler2D u_mask;
 uniform vec2 u_resolution;
 uniform float u_time;
 uniform float u_intensity;
-uniform float u_param;
+uniform float u_param0; // Pixel Size
+uniform float u_param1; // Rainbow
+uniform float u_param2; // Color Levels
 varying vec2 v_texCoord;
 
 vec3 rgb2hsv(vec3 c) {
@@ -200,23 +217,24 @@ void main() {
   vec4 original = texture2D(u_image, v_texCoord);
   float mask = texture2D(u_mask, v_texCoord).r;
 
+  float pixelSize = 4.0 + u_param0 * 20.0; // 4 to 24
+  float levels = 2.0 + u_param2 * 6.0; // 2 to 8
+
   // Pixelation
-  float pixelSize = 8.0;
   vec2 pixelCoord = floor(v_texCoord * u_resolution / pixelSize) * pixelSize;
   vec2 pixelUV = (pixelCoord + pixelSize * 0.5) / u_resolution;
   vec3 color = texture2D(u_image, pixelUV).rgb;
 
-  // Quantize to retro palette (4 levels per channel)
-  vec3 quantized = floor(color * 4.0 + 0.5) / 4.0;
+  // Quantize to retro palette
+  vec3 quantized = floor(color * levels + 0.5) / levels;
 
-  // Rainbow coloration via u_param (0 = none, 1 = full)
+  // Rainbow coloration via u_param1 (0 = none, 1 = full)
   vec3 hsv = rgb2hsv(quantized);
-  // Shift hue based on position and boost saturation
-  hsv.x = fract(hsv.x + u_param * 0.3 * (v_texCoord.x + v_texCoord.y));
-  hsv.y = min(hsv.y + u_param * 0.5, 1.0);
-  hsv.z = min(hsv.z + u_param * 0.08, 1.0);
+  hsv.x = fract(hsv.x + u_param1 * 0.3 * (v_texCoord.x + v_texCoord.y));
+  hsv.y = min(hsv.y + u_param1 * 0.5, 1.0);
+  hsv.z = min(hsv.z + u_param1 * 0.08, 1.0);
   vec3 rainbowed = hsv2rgb(hsv);
-  quantized = mix(quantized, rainbowed, u_param);
+  quantized = mix(quantized, rainbowed, u_param1);
 
   // Edge detection for outlines
   vec2 px = 1.0 / u_resolution;
@@ -226,7 +244,6 @@ void main() {
   float edge = abs(c0 - cR) + abs(c0 - cD);
   float outline = smoothstep(0.08, 0.2, edge);
 
-  // Dark outlines on pixel boundaries
   vec3 effected = quantized * (1.0 - outline * 0.8);
 
   gl_FragColor = vec4(mix(original.rgb, effected, mask * u_intensity), original.a);
@@ -238,15 +255,22 @@ void main() {
     id: 'vintage-1950s',
     name: 'Vintage 1950s',
     description: 'Film grain with faded 1950s colors',
+    params: [
+      { label: 'Grain', default: 0.5 },
+      { label: 'Fade', default: 0.5 },
+      { label: 'Vignette', default: 0.5 },
+    ],
     code: `precision mediump float;
 uniform sampler2D u_image;
 uniform sampler2D u_mask;
 uniform vec2 u_resolution;
 uniform float u_time;
 uniform float u_intensity;
+uniform float u_param0; // Grain
+uniform float u_param1; // Fade
+uniform float u_param2; // Vignette
 varying vec2 v_texCoord;
 
-// Pseudo-random noise
 float rand(vec2 co) {
   return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
 }
@@ -256,30 +280,36 @@ void main() {
   float mask = texture2D(u_mask, v_texCoord).r;
   vec3 color = original.rgb;
 
+  float grainAmt = u_param0 * 0.2; // 0 to 0.2
+  float fadeAmt = u_param1; // 0 to 1
+  float vigAmt = u_param2; // 0 to 1
+
   // Desaturate toward warm sepia
   float lum = dot(color, vec3(0.299, 0.587, 0.114));
   vec3 sepia = vec3(lum * 1.05, lum * 0.92, lum * 0.7);
   color = mix(color, sepia, 0.65);
 
-  // Fade blacks — lift shadows (as if the print has faded)
-  color = color * 0.8 + vec3(0.12, 0.10, 0.08);
+  // Fade blacks — lift shadows (param-driven)
+  float lift = fadeAmt * 0.25;
+  color = color * (1.0 - lift) + vec3(lift * 0.9, lift * 0.8, lift * 0.6);
 
   // Slight warm color cast
   color.r = min(color.r * 1.05, 1.0);
   color.b = color.b * 0.9;
 
-  // Reduce contrast
-  color = mix(vec3(0.5), color, 0.85);
+  // Reduce contrast (more with more fade)
+  float contrast = 0.95 - fadeAmt * 0.2;
+  color = mix(vec3(0.5), color, contrast);
 
-  // Film grain
-  float grain = rand(v_texCoord * u_resolution + u_time * 100.0) * 0.12 - 0.06;
+  // Film grain (param-driven)
+  float grain = rand(v_texCoord * u_resolution + u_time * 100.0) * grainAmt * 2.0 - grainAmt;
   color += grain;
 
-  // Vignette
+  // Vignette (param-driven)
   vec2 vigUV = v_texCoord * (1.0 - v_texCoord);
   float vig = vigUV.x * vigUV.y * 16.0;
   vig = pow(clamp(vig, 0.0, 1.0), 0.3);
-  color *= mix(0.6, 1.0, vig);
+  color *= mix(1.0 - vigAmt * 0.5, 1.0, vig);
 
   vec3 effected = clamp(color, 0.0, 1.0);
 

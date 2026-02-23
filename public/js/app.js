@@ -51,10 +51,7 @@ const samSelectControls = document.getElementById('samSelectControls');
 const samSelectStatus = document.getElementById('samSelectStatus');
 const samBadge = document.getElementById('samBadge');
 const presetGrid = document.getElementById('presetGrid');
-const paramControls = document.getElementById('paramControls');
-const paramLabel = document.getElementById('paramLabel');
-const paramSlider = document.getElementById('paramSlider');
-const paramValue = document.getElementById('paramValue');
+const paramSlidersContainer = document.getElementById('paramSlidersContainer');
 const saveDialog = document.getElementById('saveDialog');
 const saveShaderName = document.getElementById('saveShaderName');
 const saveDialogCancel = document.getElementById('saveDialogCancel');
@@ -207,13 +204,6 @@ function setupEventListeners() {
 
   showMaskToggle.addEventListener('change', () => {
     maskEditor.setVisible(showMaskToggle.checked);
-  });
-
-  // Param slider (for presets like Retro Pixelate's Rainbow control)
-  paramSlider.addEventListener('input', () => {
-    const v = paramSlider.value / 100;
-    paramValue.textContent = `${paramSlider.value}%`;
-    renderer.setParam(v);
   });
 
   // AI Mask generation
@@ -435,8 +425,8 @@ async function generateShader() {
 
     // Clear preset state
     activePresetId = null;
-    paramControls.hidden = true;
-    renderer.setParam(0.0);
+    clearParamSliders();
+    renderer.resetParams();
     presetGrid.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
 
     // Update UI
@@ -507,9 +497,6 @@ async function generateAIMask() {
       // Apply the SAM 3 polygon mask
       maskEditor.setFromPolygons(data.polygons);
 
-      showMaskToggle.checked = true;
-      maskEditor.setVisible(true);
-
       showMaskStatus(`Selected: "${target}" (SAM 3)`, 'success');
       setTimeout(() => { aiMaskStatus.hidden = true; }, 3000);
       aiMaskBtn.disabled = false;
@@ -543,10 +530,6 @@ async function generateAIMask() {
 
     // Render polygon-based mask onto the mask canvas
     maskEditor.setFromPolygons(data.polygons);
-
-    // Show the mask overlay so the user can see the result
-    showMaskToggle.checked = true;
-    maskEditor.setVisible(true);
 
     showMaskStatus(`Selected: "${target}"`, 'success');
     setTimeout(() => { aiMaskStatus.hidden = true; }, 3000);
@@ -596,16 +579,45 @@ async function handleSamClick(nx, ny, additive) {
     // Apply the polygon mask
     maskEditor.setFromPolygons(data.polygons, additive);
 
-    // Show the mask overlay
-    showMaskToggle.checked = true;
-    maskEditor.setVisible(true);
-
     const label = data.objectName || 'object';
     showSamStatus(`Selected: "${label}"`, 'success');
     setTimeout(() => { samSelectStatus.hidden = true; }, 3000);
   } catch (err) {
     showSamStatus(`Error: ${err.message}`, 'error');
   }
+}
+
+// --- Param Sliders ---
+
+function clearParamSliders() {
+  paramSlidersContainer.innerHTML = '';
+}
+
+function renderParamSliders(params) {
+  clearParamSliders();
+  renderer.resetParams();
+
+  if (!params || params.length === 0) return;
+
+  params.forEach((param, index) => {
+    const defaultVal = Math.round((param.default != null ? param.default : 0.5) * 100);
+    const label = document.createElement('label');
+    label.innerHTML = `${param.label} <input type="range" min="0" max="100" value="${defaultVal}" data-param-index="${index}"> <span>${defaultVal}%</span>`;
+
+    const slider = label.querySelector('input[type="range"]');
+    const valueSpan = label.querySelector('span');
+
+    slider.addEventListener('input', () => {
+      const v = slider.value / 100;
+      valueSpan.textContent = `${slider.value}%`;
+      renderer.setParam(index, v);
+    });
+
+    paramSlidersContainer.appendChild(label);
+
+    // Set the initial default value on the renderer
+    renderer.setParam(index, param.default != null ? param.default : 0.5);
+  });
 }
 
 // --- Presets ---
@@ -638,16 +650,8 @@ function applyPreset(id) {
     };
     activePresetId = id;
 
-    // Show/hide param slider
-    if (preset.paramLabel) {
-      paramLabel.textContent = preset.paramLabel;
-      paramControls.hidden = false;
-    } else {
-      paramControls.hidden = true;
-      renderer.setParam(0.0);
-      paramSlider.value = 0;
-      paramValue.textContent = '0%';
-    }
+    // Build param sliders for this preset
+    renderParamSliders(preset.params);
 
     // Update UI
     shaderInfo.hidden = false;
@@ -730,8 +734,8 @@ function applyLibraryShader(id) {
 
     // Clear preset state
     activePresetId = null;
-    paramControls.hidden = true;
-    renderer.setParam(0.0);
+    clearParamSliders();
+    renderer.resetParams();
     presetGrid.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
 
     shaderInfo.hidden = false;
