@@ -22,58 +22,97 @@ const SHADERS_FILE = join(DATA_DIR, 'shaders.json');
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
-// --- SAM / Replicate integration ---
+// --- SAM 3 / Roboflow integration ---
 
-const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN || '';
+const ROBOFLOW_API_KEY = process.env.ROBOFLOW_API_KEY || '';
 
-// Map model names to their latest version hashes (community models need this)
-const REPLICATE_VERSIONS = {
-  'schananas/grounded_sam': 'ee871c19efb1941f55f66a3d7d960428c8a5afcb77449547fe8e5a3ab9ebc21c'
-};
+async function runSAM3(base64Image, prompts, options = {}) {
+  if (!ROBOFLOW_API_KEY) throw new Error('ROBOFLOW_API_KEY not set');
 
-async function runReplicate(model, input) {
-  if (!REPLICATE_TOKEN) throw new Error('REPLICATE_API_TOKEN not set');
+  const body = {
+    image: { type: 'base64', value: base64Image },
+    prompts: prompts.map(text => ({ type: 'text', text })),
+    format: 'polygon',
+    output_prob_thresh: options.threshold || 0.5
+  };
 
-  const version = REPLICATE_VERSIONS[model];
-  if (!version) throw new Error(`Unknown model: ${model}`);
-
-  const res = await fetch('https://api.replicate.com/v1/predictions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${REPLICATE_TOKEN}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'wait=60'
-    },
-    body: JSON.stringify({ version, input })
-  });
+  const res = await fetch(
+    `https://serverless.roboflow.com/sam3/concept_segment?api_key=${encodeURIComponent(ROBOFLOW_API_KEY)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }
+  );
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Replicate API error ${res.status}`);
+    throw new Error(err.message || err.detail || `Roboflow API error ${res.status}`);
   }
 
-  const prediction = await res.json();
-
-  if (prediction.status === 'succeeded') return prediction.output;
-  if (prediction.status === 'failed') throw new Error(prediction.error || 'Prediction failed');
-
-  // Not done yet — poll
-  return await pollReplicate(prediction.urls.get);
+  return await res.json();
 }
 
-async function pollReplicate(url) {
-  for (let i = 0; i < 120; i++) {
-    await new Promise(r => setTimeout(r, 1000));
-    const res = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` }
-    });
-    const data = await res.json();
-    if (data.status === 'succeeded') return data.output;
-    if (data.status === 'failed' || data.status === 'canceled') {
-      throw new Error(data.error || 'Prediction failed');
+// Extract normalized (0-1) polygon coordinates from SAM 3 response
+function extractPolygons(sam3Result, imageWidth, imageHeight) {
+  const polygons = [];
+  const results = sam3Result.prompt_results || sam3Result.results || [];
+
+  for (const pr of results) {
+    const preds = pr.predictions || [];
+    for (const pred of preds) {
+      const masks = pred.masks || pred.points || [];
+      for (const mask of masks) {
+        if (!Array.isArray(mask) || mask.length < 3) continue;
+        // Normalize pixel coordinates to 0-1 range
+        const normalized = mask.map(pt => [
+          pt[0] / imageWidth,
+          pt[1] / imageHeight
+        ]);
+        polygons.push(normalized);
+      }
     }
   }
-  throw new Error('Prediction timed out');
+
+  return polygons;
+}
+
+// Parse image dimensions from PNG/JPEG buffer header
+function getImageDimensions(buffer, mimetype) {
+  if (mimetype === 'image/png') {
+    return {
+      width: buffer.readUInt32BE(16),
+      height: buffer.readUInt32BE(20)
+    };
+  }
+  if (mimetype === 'image/jpeg' || mimetype === 'image/jpg') {
+    let i = 2;
+    while (i < buffer.length - 8) {
+      if (buffer[i] === 0xFF) {
+        const marker = buffer[i + 1];
+        if (marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC) {
+          return {
+            height: buffer.readUInt16BE(i + 5),
+            width: buffer.readUInt16BE(i + 7)
+          };
+        }
+        const segLen = buffer.readUInt16BE(i + 2);
+        i += segLen + 2;
+      } else {
+        i++;
+      }
+    }
+  }
+  if (mimetype === 'image/webp') {
+    // Simple VP8 header parse for lossy WebP
+    if (buffer.toString('ascii', 12, 16) === 'VP8 ') {
+      return {
+        width: buffer.readUInt16LE(26) & 0x3FFF,
+        height: buffer.readUInt16LE(28) & 0x3FFF
+      };
+    }
+  }
+  throw new Error('Could not determine image dimensions from buffer');
 }
 
 
@@ -149,60 +188,42 @@ precision mediump float;
 
 // --- SAM endpoints ---
 
-// Check if SAM is available (Replicate token set)
+// Check if SAM is available (Roboflow API key set)
 app.get('/api/sam-status', (_req, res) => {
-  res.json({ available: !!REPLICATE_TOKEN });
+  res.json({ available: !!ROBOFLOW_API_KEY });
 });
 
-// Text-based segmentation using Grounded SAM (GroundingDINO + SAM)
+// Text-based segmentation using SAM 3 via Roboflow
 app.post('/api/sam-segment', upload.single('image'), async (req, res) => {
   try {
-    if (!REPLICATE_TOKEN) {
-      return res.status(503).json({ error: 'SAM requires REPLICATE_API_TOKEN environment variable' });
+    if (!ROBOFLOW_API_KEY) {
+      return res.status(503).json({ error: 'SAM requires ROBOFLOW_API_KEY environment variable' });
     }
 
-    const { prompt, negative_prompt, adjustment } = req.body;
+    const { prompt } = req.body;
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
     if (!req.file) return res.status(400).json({ error: 'Image is required' });
 
     const base64 = req.file.buffer.toString('base64');
-    const dataUri = `data:${req.file.mimetype};base64,${base64}`;
+    const dims = getImageDimensions(req.file.buffer, req.file.mimetype);
 
-    const input = {
-      image: dataUri,
-      mask_prompt: prompt.trim()
-    };
-    if (negative_prompt && negative_prompt.trim()) {
-      input.negative_mask_prompt = negative_prompt.trim();
-    }
-    if (adjustment) {
-      input.adjustment_factor = parseInt(adjustment) || 0;
-    }
+    const result = await runSAM3(base64, [prompt.trim()]);
+    const polygons = extractPolygons(result, dims.width, dims.height);
 
-    const output = await runReplicate('schananas/grounded_sam', input);
+    if (polygons.length === 0) throw new Error('No segmentation result — SAM 3 could not find the target');
 
-    // output is an array of mask image URIs
-    const maskUrl = Array.isArray(output) ? output[0] : output;
-    if (!maskUrl) throw new Error('No mask returned');
-
-    // Download the mask image and return as data URI
-    const maskRes = await fetch(maskUrl);
-    if (!maskRes.ok) throw new Error('Failed to download mask');
-    const maskBuffer = Buffer.from(await maskRes.arrayBuffer());
-    const maskBase64 = maskBuffer.toString('base64');
-
-    res.json({ mask: `data:image/png;base64,${maskBase64}` });
+    res.json({ polygons });
   } catch (err) {
     console.error('SAM segment error:', err);
     res.status(500).json({ error: 'SAM segmentation failed: ' + err.message });
   }
 });
 
-// Click-to-segment: identify object at click point via Claude, then segment with Grounded SAM
+// Click-to-segment: identify object at click point via Claude, then segment with SAM 3
 app.post('/api/sam-click', upload.single('image'), async (req, res) => {
   try {
-    if (!REPLICATE_TOKEN) {
-      return res.status(503).json({ error: 'SAM requires REPLICATE_API_TOKEN environment variable' });
+    if (!ROBOFLOW_API_KEY) {
+      return res.status(503).json({ error: 'SAM requires ROBOFLOW_API_KEY environment variable' });
     }
     if (!req.file) return res.status(400).json({ error: 'Image is required' });
 
@@ -213,7 +234,7 @@ app.post('/api/sam-click', upload.single('image'), async (req, res) => {
 
     const base64 = req.file.buffer.toString('base64');
     const mediaType = req.file.mimetype;
-    const dataUri = `data:${mediaType};base64,${base64}`;
+    const dims = getImageDimensions(req.file.buffer, req.file.mimetype);
 
     const nx = parseFloat(x);
     const ny = parseFloat(y);
@@ -234,26 +255,13 @@ app.post('/api/sam-click', upload.single('image'), async (req, res) => {
 
     const objectName = identifyResponse.content[0].text.trim().toLowerCase();
 
-    // Step 2: Use Grounded SAM to get a precise mask for the identified object
-    const samInput = {
-      image: dataUri,
-      mask_prompt: objectName
-    };
+    // Step 2: Use SAM 3 to get a precise mask for the identified object
+    const result = await runSAM3(base64, [objectName]);
+    const polygons = extractPolygons(result, dims.width, dims.height);
 
-    const output = await runReplicate('schananas/grounded_sam', samInput);
+    if (polygons.length === 0) throw new Error('No mask returned from SAM 3');
 
-    const maskUrl = Array.isArray(output) ? output[0] : output;
-    if (!maskUrl) throw new Error('No mask returned from SAM');
-
-    const maskRes = await fetch(maskUrl);
-    if (!maskRes.ok) throw new Error('Failed to download mask');
-    const maskBuffer = Buffer.from(await maskRes.arrayBuffer());
-    const maskBase64 = maskBuffer.toString('base64');
-
-    res.json({
-      mask: `data:image/png;base64,${maskBase64}`,
-      objectName
-    });
+    res.json({ polygons, objectName });
   } catch (err) {
     console.error('SAM click error:', err);
     res.status(500).json({ error: 'SAM click-to-segment failed: ' + err.message });

@@ -113,14 +113,16 @@ export class MaskEditor {
   }
 
   // Render normalized polygons onto the mask canvas as white-on-black
-  setFromPolygons(polygons) {
+  setFromPolygons(polygons, additive = false) {
     const w = this.canvas.width;
     const h = this.canvas.height;
     const ctx = this.ctx;
 
-    // Start with black (nothing selected)
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, w, h);
+    if (!additive) {
+      // Start with black (nothing selected)
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, w, h);
+    }
 
     // Draw each polygon as white
     ctx.fillStyle = '#ffffff';

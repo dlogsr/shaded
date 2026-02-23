@@ -89,7 +89,7 @@ async function init() {
     samSelectTool.classList.add('sam-tool');
   } else {
     samSelectTool.disabled = true;
-    samSelectTool.title = 'SAM unavailable — set REPLICATE_API_TOKEN';
+    samSelectTool.title = 'SAM unavailable — set ROBOFLOW_API_KEY';
   }
 
   // Wire up SAM click handler on the mask editor
@@ -167,7 +167,7 @@ function setupEventListeners() {
   quickSelectTool.addEventListener('click', () => setMaskTool('quickselect'));
   samSelectTool.addEventListener('click', () => {
     if (!samAvailable) {
-      showMaskStatus('SAM requires REPLICATE_API_TOKEN environment variable.', 'error');
+      showMaskStatus('SAM requires ROBOFLOW_API_KEY environment variable.', 'error');
       return;
     }
     setMaskTool('sam');
@@ -405,9 +405,9 @@ async function generateAIMask() {
 
   aiMaskBtn.disabled = true;
 
-  // Use SAM (Grounded SAM) when available for precise pixel-level masks
+  // Use SAM 3 (Roboflow) when available for precise segmentation
   if (samAvailable) {
-    showMaskStatus('<span class="spinner"></span>Segmenting with SAM...', 'loading');
+    showMaskStatus('<span class="spinner"></span>Segmenting with SAM 3...', 'loading');
     try {
       const formData = new FormData();
       formData.append('prompt', target);
@@ -425,20 +425,20 @@ async function generateAIMask() {
 
       const data = await res.json();
 
-      // Apply the SAM mask (pixel-perfect)
-      await maskEditor.setFromImage(data.mask);
+      // Apply the SAM 3 polygon mask
+      maskEditor.setFromPolygons(data.polygons);
 
       showMaskToggle.checked = true;
       maskEditor.setVisible(true);
 
-      showMaskStatus(`Selected: "${target}" (SAM)`, 'success');
+      showMaskStatus(`Selected: "${target}" (SAM 3)`, 'success');
       setTimeout(() => { aiMaskStatus.hidden = true; }, 3000);
       aiMaskBtn.disabled = false;
       return;
     } catch (err) {
       // Fall back to Claude polygon approach
-      console.warn('SAM failed, falling back to Claude:', err.message);
-      showMaskStatus('<span class="spinner"></span>SAM failed, trying Claude...', 'loading');
+      console.warn('SAM 3 failed, falling back to Claude:', err.message);
+      showMaskStatus('<span class="spinner"></span>SAM 3 failed, trying Claude...', 'loading');
     }
   } else {
     showMaskStatus('<span class="spinner"></span>Generating mask...', 'loading');
@@ -514,8 +514,8 @@ async function handleSamClick(nx, ny, additive) {
 
     const data = await res.json();
 
-    // Apply the mask
-    await maskEditor.setFromImage(data.mask, additive);
+    // Apply the polygon mask
+    maskEditor.setFromPolygons(data.polygons, additive);
 
     // Show the mask overlay
     showMaskToggle.checked = true;
