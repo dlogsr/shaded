@@ -11,7 +11,7 @@ export class ShaderRenderer {
     this.animating = false;
     this.startTime = 0;
     this.intensity = 1.0;
-    this.param = 0.0;
+    this.params = [0.0, 0.0, 0.0, 0.0];
     this.frameId = null;
     this.currentShaderCode = null;
     this.imageLoaded = false;
@@ -189,8 +189,13 @@ export class ShaderRenderer {
     if (this.program && this.imageLoaded) this.render();
   }
 
-  setParam(value) {
-    this.param = value;
+  setParam(index, value) {
+    this.params[index] = value;
+    if (this.program && this.imageLoaded) this.render();
+  }
+
+  resetParams() {
+    this.params = [0.0, 0.0, 0.0, 0.0];
     if (this.program && this.imageLoaded) this.render();
   }
 
@@ -247,8 +252,15 @@ export class ShaderRenderer {
     const intLoc = gl.getUniformLocation(this.program, 'u_intensity');
     if (intLoc) gl.uniform1f(intLoc, this.intensity);
 
+    // Legacy u_param (maps to params[0]) for backward compat with AI-generated shaders
     const paramLoc = gl.getUniformLocation(this.program, 'u_param');
-    if (paramLoc) gl.uniform1f(paramLoc, this.param);
+    if (paramLoc) gl.uniform1f(paramLoc, this.params[0]);
+
+    // Multi-param uniforms u_param0 through u_param3
+    for (let i = 0; i < 4; i++) {
+      const loc = gl.getUniformLocation(this.program, `u_param${i}`);
+      if (loc) gl.uniform1f(loc, this.params[i]);
+    }
 
     // Set up attributes
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
