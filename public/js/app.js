@@ -395,26 +395,38 @@ async function generateShader() {
 
     const data = await res.json();
 
-    // Try to compile and apply the shader, auto-fix on failure
+    // Try to compile and apply the shader, auto-fix on failure (up to 2 attempts)
     let shaderCode = data.shader;
+    let lastError = null;
+    let compiled = false;
+
     try {
       renderer.setShader(shaderCode);
+      compiled = true;
     } catch (compileErr) {
-      // Auto-retry: send the broken shader + error to Claude for fixing
-      showStatus('<span class="spinner"></span>Shader had a compile error, auto-fixing...', 'loading');
+      lastError = compileErr.message;
+    }
+
+    for (let attempt = 1; attempt <= 2 && !compiled; attempt++) {
+      showStatus(`<span class="spinner"></span>Shader compile error, auto-fixing (attempt ${attempt}/2)...`, 'loading');
       try {
         const fixRes = await fetch('/api/fix-shader', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ shader: shaderCode, error: compileErr.message })
+          body: JSON.stringify({ shader: shaderCode, error: lastError })
         });
         if (!fixRes.ok) throw new Error('Fix request failed');
         const fixData = await fixRes.json();
         shaderCode = fixData.shader;
         renderer.setShader(shaderCode);
+        compiled = true;
       } catch (retryErr) {
-        throw new Error(`Shader compilation failed: ${compileErr.message}`);
+        lastError = retryErr.message;
       }
+    }
+
+    if (!compiled) {
+      throw new Error(`Shader compilation failed after auto-fix attempts: ${lastError}`);
     }
 
     currentShader = {

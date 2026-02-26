@@ -149,7 +149,14 @@ RULES:
    - NEVER write abs(intVar), min(intA, intB), max(intA, intB), or clamp(intX, intLo, intHi).
    - For loop index math, cast to float first: \`abs(float(i - center))\`.
    - All arithmetic with these built-in functions MUST use float operands.
-8. For selective/object-based effects, use image analysis techniques in the shader:
+8. CRITICAL — TYPE DIMENSION MATCHING:
+   - NEVER assign a float to a vec2/vec3/vec4 variable or vice versa.
+   - vec2 variables need vec2 values: \`vec2 v = vec2(1.0, 2.0);\` NOT \`vec2 v = 1.0;\`
+   - When doing math with vectors and scalars, keep dimensions consistent.
+   - \`vec2 * float\` is OK, but \`vec2 = float\` is NOT.
+   - texture2D() returns vec4 — extract components: \`.r\`, \`.rgb\`, \`.xy\`, etc.
+   - When building vec2 from components use the constructor: \`vec2(x, y)\`.
+9. For selective/object-based effects, use image analysis techniques in the shader:
    - Color range detection (hue/saturation/brightness thresholds)
    - Position-based selection (e.g., upper region for sky)
    - Luminance-based selection
